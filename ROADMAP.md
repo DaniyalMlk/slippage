@@ -39,10 +39,10 @@ untestable.
 
 ## Phase 5 — Constrained scheduling
 
-- [ ] Discrete dynamic programme over remaining quantity and time
-- [ ] Participation caps, lot sizes and no-crossing constraints
-- [ ] Agreement with the closed form when constraints are slack
-- [ ] Adaptive re-optimisation from a partially executed state
+- [x] Discrete dynamic programme over remaining quantity and time
+- [x] Participation caps, minimum trade floors and lot sizes
+- [x] Agreement with the closed form when constraints are slack
+- [x] Adaptive re-optimisation from a partially executed state
 
 ## Phase 6 — Volume curves and simulation
 
