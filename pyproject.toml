@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "slippage"
+version = "0.1.0"
+description = "An optimal execution and transaction cost analysis engine"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Daniyal" }]
+keywords = [
+    "transaction-cost-analysis",
+    "optimal-execution",
+    "market-impact",
+    "implementation-shortfall",
+    "almgren-chriss",
+    "quantitative-finance",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Typing :: Typed",
+]
+dependencies = ["numpy>=1.23"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "hypothesis>=6.80",
+    "mypy>=1.8",
+    "ruff>=0.4",
+    "scipy>=1.10",
+]
+
+[project.scripts]
+slippage = "slippage.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/DaniyalMlk/slippage"
+Issues = "https://github.com/DaniyalMlk/slippage/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/slippage"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["src/slippage", "tests"]
+plugins = []
+
+[[tool.mypy.overrides]]
+module = ["scipy.*"]
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "N", "C4", "PIE"]
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
