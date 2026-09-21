@@ -9,14 +9,16 @@ way a VWAP number ends up meaningless.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 
+from .costs import cost_bps, cost_currency
 from .exceptions import ValidationError
 from .series import BarSeries
 from .types import Order
 
-__all__ = ["Benchmark", "benchmark_price", "order_window"]
+__all__ = ["Benchmark", "Score", "benchmark_price", "order_window", "score_order"]
 
 
 class Benchmark(Enum):
@@ -99,3 +101,46 @@ def benchmark_price(
     if benchmark is Benchmark.OPEN:
         return series.open_price(window_start, window_end)
     raise ValidationError(f"unsupported benchmark {benchmark!r}")
+
+
+@dataclass(frozen=True)
+class Score:
+    """An executed order measured against one benchmark.
+
+    Only the *filled* quantity is scored here. What happened to the unfilled
+    remainder is opportunity cost, which belongs to implementation shortfall
+    and needs a decision price and a final price that a single benchmark
+    comparison does not have.
+    """
+
+    benchmark: Benchmark
+    benchmark_price: float
+    average_price: float
+    filled_quantity: float
+    cost_bps: float
+    cost_currency: float
+
+
+def score_order(
+    order: Order,
+    series: BarSeries,
+    benchmark: Benchmark = Benchmark.ARRIVAL,
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> Score:
+    """Score the filled part of ``order`` against ``benchmark``.
+
+    Raises :class:`~slippage.exceptions.ValidationError` for an order with no
+    fills: there is no execution to score.
+    """
+    reference = benchmark_price(order, series, benchmark, start=start, end=end)
+    average = order.average_price
+    return Score(
+        benchmark=benchmark,
+        benchmark_price=reference,
+        average_price=average,
+        filled_quantity=order.filled_quantity,
+        cost_bps=cost_bps(order.side, average, reference),
+        cost_currency=cost_currency(order.side, order.filled_quantity, average, reference),
+    )

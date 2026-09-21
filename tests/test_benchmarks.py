@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 from conftest import make_bar, minute
 
-from slippage.benchmarks import Benchmark, benchmark_price, order_window
+from slippage.benchmarks import Benchmark, benchmark_price, order_window, score_order
+from slippage.exceptions import ValidationError
 from slippage.series import BarSeries
 from slippage.types import Bar, Fill, Order, Side
 
@@ -123,3 +124,55 @@ class TestBenchmarkPrice:
         prices = {b: benchmark_price(order, bars, b) for b in Benchmark}
         for price in prices.values():
             assert price == pytest.approx(50.0)
+
+
+class TestScoreOrder:
+    def test_buy_above_every_benchmark_scores_a_positive_cost(
+        self, simple_order: Order, series: BarSeries
+    ) -> None:
+        # Average price 100.16 against a market that opens the window at 100.0.
+        score = score_order(simple_order, series, Benchmark.ARRIVAL)
+        assert score.benchmark_price == pytest.approx(series[1].open)
+        assert score.average_price == pytest.approx(100.16)
+        assert score.cost_bps == pytest.approx(1e4 * (100.16 - series[1].open) / series[1].open)
+        assert score.cost_currency == pytest.approx(1_000.0 * (100.16 - series[1].open))
+
+    def test_the_same_fills_on_a_sell_flip_the_sign(
+        self, simple_order: Order, series: BarSeries
+    ) -> None:
+        sell = Order(
+            symbol=simple_order.symbol,
+            side=Side.SELL,
+            quantity=simple_order.quantity,
+            decision_time=simple_order.decision_time,
+            arrival_time=simple_order.arrival_time,
+            fills=simple_order.fills,
+        )
+        for benchmark in (Benchmark.ARRIVAL, Benchmark.INTERVAL_VWAP, Benchmark.CLOSE):
+            buy_score = score_order(simple_order, series, benchmark)
+            sell_score = score_order(sell, series, benchmark)
+            assert sell_score.cost_bps == pytest.approx(-buy_score.cost_bps)
+
+    def test_only_the_filled_quantity_is_scored(self, series: BarSeries) -> None:
+        order = Order(
+            symbol="ACME",
+            side=Side.BUY,
+            quantity=1_000.0,
+            decision_time=minute(0),
+            arrival_time=minute(1),
+            fills=(Fill(timestamp=minute(2), quantity=100.0, price=101.0),),
+        )
+        score = score_order(order, series, Benchmark.ARRIVAL)
+        assert score.filled_quantity == pytest.approx(100.0)
+        assert score.cost_currency == pytest.approx(100.0 * (101.0 - series[1].open))
+
+    def test_scoring_an_unfilled_order_raises(self, series: BarSeries) -> None:
+        order = Order(
+            symbol="ACME",
+            side=Side.BUY,
+            quantity=1_000.0,
+            decision_time=minute(0),
+            arrival_time=minute(1),
+        )
+        with pytest.raises(ValidationError, match="no fills"):
+            score_order(order, series)
