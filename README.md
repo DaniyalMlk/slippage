@@ -29,13 +29,22 @@ from slippage import Bar, BarSeries, Benchmark, Fill, Order, Side, score_order
 
 t0 = datetime(2026, 3, 2, 9, 30)
 bars = BarSeries(
-    Bar(t0 + timedelta(minutes=i), open=50 + 0.02 * i, high=50.05 + 0.02 * i,
-        low=49.97 + 0.02 * i, close=50.02 + 0.02 * i, volume=20_000)
+    Bar(
+        t0 + timedelta(minutes=i),
+        open=50 + 0.02 * i,
+        high=50.05 + 0.02 * i,
+        low=49.97 + 0.02 * i,
+        close=50.02 + 0.02 * i,
+        volume=20_000,
+    )
     for i in range(30)
 )
 order = Order(
-    symbol="ACME", side=Side.BUY, quantity=5_000,
-    decision_time=t0, arrival_time=t0 + timedelta(minutes=2),
+    symbol="ACME",
+    side=Side.BUY,
+    quantity=5_000,
+    decision_time=t0,
+    arrival_time=t0 + timedelta(minutes=2),
     fills=(
         Fill(t0 + timedelta(minutes=3), 2_000, 50.09),
         Fill(t0 + timedelta(minutes=7), 3_000, 50.16),
