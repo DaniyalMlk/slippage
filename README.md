@@ -10,6 +10,12 @@ The library answers two questions that sit either side of a trade:
 - **Before the fact** — given a market impact model and a tolerance for risk,
   how should the remaining quantity be spread over the trading horizon?
 
+Under both sits a validated numerical core: implementation shortfall that is
+checked against its own direct formula on every call, impact models fitted with
+honest standard errors, the Almgren–Chriss trajectory checked against the
+paper's published figures, and a constrained scheduler checked against
+exhaustive enumeration. Each section below states what was measured and how.
+
 See [ROADMAP.md](ROADMAP.md) for the build order.
 
 ## Install
@@ -20,6 +26,59 @@ python -m pytest
 ```
 
 Python 3.10 or later. The only runtime dependency is NumPy.
+
+## Command line
+
+Installing the package provides a `slippage` command. `sample-data` writes a
+synthetic book, so every step below runs without real data:
+
+```bash
+slippage sample-data --out book
+slippage tca --orders book/orders.csv --fills book/fills.csv --bars book/bars.csv \
+    --fees-per-share 0.0005 --group-by side
+```
+
+```
+60 orders, paper notional 205,208,433, shortfall -62,784 (-3.06 bps)
+
+             orders        delay      trading  opportunity   commission         fees      total
+-----------------------------------------------------------------------------------------------
+buy              32         1.38       -12.29         0.14         0.19         0.05     -10.53
+sell             28         5.71         7.51        -0.96         0.26         0.06      12.59
+-----------------------------------------------------------------------------------------------
+all              60         2.78        -5.89        -0.21         0.21         0.05      -3.06
+(basis points of paper notional)
+
+outliers at a modified z-score of 3.5:
+  ORD0046    SYM06    sell   -147.34 bps   z = -5.1
+  ...
+```
+
+```bash
+slippage schedule --quantity 1000000 --horizon 5 --periods 5 --volatility 0.95 \
+    --gamma 2.5e-7 --eta 2.5e-6 --epsilon 0.0625 --risk-aversion 1e-6 \
+    --max-trade 300000 --lot-size 1000
+```
+
+```
+method: dynamic programme, lot 1000
+period     start         trade     remaining
+     0         0       300,000       700,000
+     1         1       300,000       400,000
+     2         2       196,000       204,000
+     3         3       118,000        86,000
+     4         4        86,000             0
+
+expected cost 756,873, standard deviation 794,266
+```
+
+`schedule` uses the closed form when impact is linear and nothing constrains
+it, and the dynamic programme otherwise. Here the cap slows the first two days
+and so *lowers* expected cost (from 911,227 unconstrained) while raising
+risk. The objective the trader asked to minimise, `E + λV`, rises from
+1,275,356 to 1,387,732, which is what a binding constraint must do. `frontier`
+prints the efficient frontier. Every subcommand takes `--json`, and bad input
+exits with status 2 and a message naming the file and line.
 
 ## Scoring an execution
 
@@ -106,6 +165,27 @@ Where the unexecuted shares' delay belongs is a convention. The default *order*
 basis charges delay on the whole target, since all of it sat idle; the
 *executed* basis charges it only on shares that traded. Both split the same
 total, which the test suite checks on randomly generated orders.
+
+## Reporting across a book
+
+`build_report` decomposes every order and aggregates by any key. Every
+aggregate is a ratio of sums: a group's cost in basis points is its total cost
+over its total paper notional. An average of per-order basis points would give
+a hundred-share order the same weight as a million-share one, and its
+components would stop adding up to its total once orders of different sizes
+mix. With ratios of sums the components add up at the order, group and book
+level, and the tests check all three.
+
+Outliers are screened by the modified z-score, `0.6745 (x − median) / MAD`,
+with Iglewicz and Hoaglin's threshold of 3.5. An ordinary z-score lets large
+outliers hide: they inflate the standard deviation they are measured against.
+In the test suite, two values fifty times the typical size score under 3 on a
+classical z-score and over 3.5 on the modified one. An order whose fills are
+made 3% worse is the first one the report flags.
+
+`compare_to_model` sets each order's realised trading cost beside what a fitted
+square-root law expected. The comparison is per executed share, so an order
+that was cut short is judged on what it traded.
 
 ## Market impact
 
@@ -294,6 +374,46 @@ consequences worth stating:
 - `simulate_prices` produces the unaffected price path and every fill price.
   The tests rebuild each path's cost from those fills and check it against the
   direct computation.
+
+## From fills to a schedule
+
+[`examples/end_to_end.py`](examples/end_to_end.py) runs the whole pipeline. It
+writes a 400-order synthetic book to CSV and reads it back, reports the book's
+shortfall, fits the square-root law to the executions, and turns the fit into a
+rate model for a new order worked under a 10% participation cap:
+
+```
+square-root law: Y = 0.512 +/- 0.088
+
+recommended schedule for 993,000 SYM00 at a 10% participation cap:
+  bucket  expected vol       cap     trade
+    9:30     2,507,904   250,790   250,000  cap binds
+   10:00     1,960,822   196,082   196,000  cap binds
+   10:30     1,628,738   162,874   162,000  cap binds
+   11:00     1,370,646   137,065   118,000
+   ...
+   15:30     2,439,236   243,924    12,000
+```
+
+The synthetic fills pay impact on the size done *so far*, so an order's
+realised cost is its peak impact times a path factor. Across this book the path
+factor averages about 0.92, so the 0.7 used to generate the book implies a
+fitted prefactor near 0.64; the fit lands within 1.5 standard errors of it. The
+test suite folds the path factor into the regression and recovers the
+generating 0.7 directly.
+
+## Layout
+
+| module | contents |
+|---|---|
+| `types`, `series`, `benchmarks`, `costs` | orders, fills, bars, benchmark prices and the sign convention |
+| `shortfall`, `report` | implementation shortfall, fill attribution, book-level TCA and outliers |
+| `impact`, `calibration` | impact models, schedule costs and fitting them to executions |
+| `execution` | Almgren–Chriss trajectories, the efficient frontier, half-life sensitivities |
+| `scheduling` | the constrained dynamic programme and its re-optimisation policy |
+| `volume`, `simulate` | volume profiles, TWAP/VWAP/POV schedules and Monte Carlo costs |
+| `io`, `cli`, `synthetic` | CSV input and output, the `slippage` command, synthetic books |
+
 
 ## Conventions
 
