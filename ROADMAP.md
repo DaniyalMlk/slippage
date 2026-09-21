@@ -15,11 +15,11 @@ untestable.
 
 ## Phase 2 — Implementation shortfall
 
-- [ ] Perold decomposition: delay, trading and opportunity cost
-- [ ] Explicit costs (commission, fees, spread crossing) kept separate from implicit
-- [ ] Attribution that sums exactly to the total, asserted as an invariant
-- [ ] Per-fill attribution and participation statistics
-- [ ] Worked example reproducing a decomposition by hand
+- [x] Perold decomposition: delay, trading and opportunity cost
+- [x] Explicit costs (commission, fees) kept separate from implicit, with the half-spread split out of trading cost
+- [x] Attribution that sums exactly to the total, asserted as an invariant
+- [x] Per-fill attribution and participation statistics
+- [x] Worked example reproducing a decomposition by hand
 
 ## Phase 3 — Market impact models
 

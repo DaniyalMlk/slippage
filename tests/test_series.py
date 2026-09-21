@@ -149,3 +149,10 @@ class TestAggregates:
         typicals = [b.typical_price for b in series]
         assert min(typicals) <= series.vwap() <= max(typicals)
         assert min(typicals) <= series.twap() <= max(typicals)
+
+
+def test_end_of_bar_containing_uses_the_bar_not_the_moment(flat_bars: list[Bar]) -> None:
+    series = BarSeries(flat_bars)
+    assert series.end_of_bar_containing(minute(3) + timedelta(seconds=45)) == minute(4)
+    assert series.end_of_bar_containing(minute(3)) == minute(4)
+    assert series.end_of_bar_containing(minute(-2)) == minute(1)

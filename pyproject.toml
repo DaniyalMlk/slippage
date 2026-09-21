@@ -53,7 +53,7 @@ addopts = "-q"
 
 [tool.mypy]
 strict = true
-files = ["src/slippage", "tests"]
+files = ["src/slippage", "tests", "examples"]
 
 [[tool.mypy.overrides]]
 module = ["scipy.*"]
