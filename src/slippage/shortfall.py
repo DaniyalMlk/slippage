@@ -42,6 +42,7 @@ from __future__ import annotations
 import math
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 
 from .costs import BPS_PER_UNIT
@@ -51,8 +52,11 @@ from .types import Order, Side
 
 __all__ = [
     "DelayBasis",
+    "FillAttribution",
     "ShortfallBreakdown",
+    "attribute_fills",
     "implementation_shortfall",
+    "participation_rate",
     "shortfall_from_market",
 ]
 
@@ -276,3 +280,76 @@ def shortfall_from_market(
         half_spread=half_spread,
         delay_basis=delay_basis,
     )
+
+
+# -- per-fill attribution ---------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FillAttribution:
+    """One fill's contribution to trading cost and its footprint in the market."""
+
+    timestamp: datetime
+    quantity: float
+    price: float
+    trading_cost: float
+    cost_bps: float
+    cumulative_quantity: float
+    cumulative_fraction: float
+    bar_volume: float
+    participation: float | None
+
+
+def attribute_fills(
+    order: Order, series: BarSeries, *, arrival_price: float | None = None
+) -> list[FillAttribution]:
+    """Break trading cost down fill by fill.
+
+    ``trading_cost`` is measured against the arrival price, so the fills'
+    costs sum exactly to :attr:`ShortfallBreakdown.trading`. ``participation``
+    is the fill's share of the volume printed in the bar it landed in, and is
+    ``None`` for a bar with no recorded volume rather than infinite.
+    """
+    p_0 = series.price_at(order.arrival_time) if arrival_price is None else arrival_price
+    _check_price("arrival_price", p_0)
+    s = order.side.sign
+    cumulative = 0.0
+    rows: list[FillAttribution] = []
+    for fill in order.fills:
+        cumulative += fill.quantity
+        bar = series.bar_containing(fill.timestamp)
+        cost = s * fill.quantity * (fill.price - p_0)
+        rows.append(
+            FillAttribution(
+                timestamp=fill.timestamp,
+                quantity=fill.quantity,
+                price=fill.price,
+                trading_cost=cost,
+                cost_bps=BPS_PER_UNIT * s * (fill.price - p_0) / p_0,
+                cumulative_quantity=cumulative,
+                cumulative_fraction=cumulative / order.quantity,
+                bar_volume=bar.volume,
+                participation=fill.quantity / bar.volume if bar.volume > 0.0 else None,
+            )
+        )
+    return rows
+
+
+def participation_rate(order: Order, series: BarSeries) -> float:
+    """Executed quantity as a fraction of market volume over the order's life.
+
+    The window runs from the bar containing arrival to the bar containing the
+    last fill, inclusive. The arrival bar is included even when arrival falls
+    part-way through it, because excluding it would drop the volume the order
+    actually traded against in its first minutes.
+    """
+    if not order.fills:
+        return 0.0
+    first_bar = series.bar_containing(order.arrival_time)
+    last_fill = order.last_fill_time
+    assert last_fill is not None
+    end = series.end_of_bar_containing(last_fill)
+    volume = series.total_volume(first_bar.timestamp, end)
+    if volume <= 0.0:
+        raise ValidationError("no market volume recorded over the order's life")
+    return order.filled_quantity / volume

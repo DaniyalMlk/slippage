@@ -12,7 +12,9 @@ from slippage.exceptions import ValidationError
 from slippage.series import BarSeries
 from slippage.shortfall import (
     DelayBasis,
+    attribute_fills,
     implementation_shortfall,
+    participation_rate,
     shortfall_from_market,
 )
 from slippage.types import Fill, Order, Side
@@ -265,6 +267,15 @@ def test_shortfall_is_paper_minus_real(order: Order, arrival: float, final: floa
     assert result.total == pytest.approx(paper - real, rel=1e-9, abs=1e-6)
 
 
+@settings(max_examples=200)
+@given(order=orders(), arrival=price)
+def test_fill_costs_sum_to_order_trading_cost(order: Order, arrival: float) -> None:
+    series = BarSeries([make_bar(n, 50.0) for n in range(0, 600, 1)])
+    rows = attribute_fills(order, series, arrival_price=arrival)
+    result = implementation_shortfall(order, arrival_price=arrival, final_price=arrival)
+    assert sum(r.trading_cost for r in rows) == pytest.approx(result.trading, rel=1e-9, abs=1e-6)
+
+
 # -- market data helpers ------------------------------------------------------
 
 
@@ -296,6 +307,46 @@ class TestFromMarket:
         result = shortfall_from_market(order, trending, final_price=51.0)
         assert result.decision_price == 50.0
         assert result.final_price == 51.0
+
+
+class TestFillAttribution:
+    def test_rows_track_cumulative_progress(self, trending: BarSeries) -> None:
+        rows = attribute_fills(worked_order(), trending, arrival_price=50.10)
+        assert [r.cumulative_quantity for r in rows] == pytest.approx([3_000.0, 7_000.0])
+        assert rows[-1].cumulative_fraction == pytest.approx(0.7)
+        assert rows[0].trading_cost == pytest.approx(3_000.0 * 0.10)
+        assert rows[0].cost_bps == pytest.approx(1e4 * 0.10 / 50.10)
+        assert rows[0].participation == pytest.approx(3_000.0 / 20_000.0)
+
+    def test_zero_volume_bar_gives_no_participation(self) -> None:
+        series = BarSeries([make_bar(n, 50.0, volume=0.0) for n in range(10)])
+        rows = attribute_fills(worked_order(), series, arrival_price=50.0)
+        assert all(r.participation is None for r in rows)
+
+    def test_participation_rate_over_the_order_life(self, trending: BarSeries) -> None:
+        # Arrival in bar 1, last fill in bar 5: five bars of 20,000.
+        assert participation_rate(worked_order(), trending) == pytest.approx(7_000.0 / 100_000.0)
+
+    def test_participation_includes_a_partial_arrival_bar(self, trending: BarSeries) -> None:
+        order = Order(
+            symbol="ACME",
+            side=Side.BUY,
+            quantity=1_000.0,
+            decision_time=minute(0),
+            arrival_time=minute(1) + timedelta(seconds=40),
+            fills=(Fill(timestamp=minute(1) + timedelta(seconds=50), quantity=500.0, price=50.1),),
+        )
+        assert participation_rate(order, trending) == pytest.approx(500.0 / 20_000.0)
+
+    def test_unfilled_order_has_zero_participation(self, trending: BarSeries) -> None:
+        order = Order(
+            symbol="ACME",
+            side=Side.BUY,
+            quantity=1_000.0,
+            decision_time=minute(0),
+            arrival_time=minute(1),
+        )
+        assert participation_rate(order, trending) == 0.0
 
 
 def test_invariant_check_tolerates_rounding_when_components_cancel() -> None:
