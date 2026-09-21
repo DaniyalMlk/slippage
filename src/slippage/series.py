@@ -134,6 +134,16 @@ class BarSeries(Sequence[Bar]):
         index = bisect.bisect_right(self._starts, moment) - 1
         return self._bars[max(index, 0)]
 
+    def end_of_bar_containing(self, moment: datetime) -> datetime:
+        """The instant the bar in progress at ``moment`` ends.
+
+        ``moment + bar_duration`` is a tempting shortcut and is wrong whenever
+        ``moment`` falls mid-bar: it reaches into the following bar and drags
+        that bar's volume and prices into the window.
+        """
+        index = max(bisect.bisect_right(self._starts, moment) - 1, 0)
+        return self._starts[index] + self._durations[index]
+
     def price_at(self, moment: datetime) -> float:
         """The price prevailing at ``moment``, to bar resolution.
 

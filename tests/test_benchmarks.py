@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 import pytest
 from conftest import make_bar, minute
 
@@ -176,3 +178,20 @@ class TestScoreOrder:
         )
         with pytest.raises(ValidationError, match="no fills"):
             score_order(order, series)
+
+
+def test_window_stops_at_the_end_of_a_mid_bar_last_fill(series: BarSeries) -> None:
+    # Regression: the window used to end at last fill + one bar, which for a
+    # fill thirty seconds into bar 4 reached into bar 5 and pulled its volume
+    # and prices into the interval VWAP.
+    order = Order(
+        symbol="ACME",
+        side=Side.BUY,
+        quantity=100.0,
+        decision_time=minute(0),
+        arrival_time=minute(1),
+        fills=(Fill(timestamp=minute(4) + timedelta(seconds=30), quantity=100.0, price=100.5),),
+    )
+    _, end = order_window(order, series)
+    assert end == minute(5)
+    assert benchmark_price(order, series, Benchmark.CLOSE) == pytest.approx(series[4].close)

@@ -63,7 +63,7 @@ def order_window(order: Order, series: BarSeries) -> tuple[datetime, datetime]:
     """
     start = order.arrival_time
     last = order.last_fill_time
-    end = series.end if last is None else last + series.bar_duration
+    end = series.end if last is None else series.end_of_bar_containing(last)
     if end <= start:
         end = start + series.bar_duration
     return start, end
