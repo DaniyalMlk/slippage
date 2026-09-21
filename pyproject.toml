@@ -36,12 +36,9 @@ dev = [
     "pytest>=7.4",
     "hypothesis>=6.80",
     "mypy>=1.8",
-    "ruff>=0.4",
+    "ruff>=0.16,<0.17",
     "scipy>=1.10",
 ]
-
-[project.scripts]
-slippage = "slippage.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/DaniyalMlk/slippage"
@@ -55,10 +52,8 @@ testpaths = ["tests"]
 addopts = "-q"
 
 [tool.mypy]
-python_version = "3.10"
 strict = true
 files = ["src/slippage", "tests"]
-plugins = []
 
 [[tool.mypy.overrides]]
 module = ["scipy.*"]

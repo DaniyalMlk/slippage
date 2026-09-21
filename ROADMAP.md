@@ -7,11 +7,11 @@ untestable.
 
 ## Phase 1 — Order and execution data model
 
-- [ ] `Side` convention fixed once, in one place, with a signed multiplier
-- [ ] `Order`, `Fill` and `Bar` value types with validation at construction
-- [ ] Benchmark prices: arrival, interval VWAP, interval TWAP, close
-- [ ] Signed cost in currency and basis points against an arbitrary benchmark
-- [ ] Packaging, type checking, linting and continuous integration
+- [x] `Side` convention fixed once, in one place, with a signed multiplier
+- [x] `Order`, `Fill` and `Bar` value types with validation at construction
+- [x] Benchmark prices: arrival, interval VWAP, interval TWAP, close
+- [x] Signed cost in currency and basis points against an arbitrary benchmark
+- [x] Packaging, type checking, linting and continuous integration
 
 ## Phase 2 — Implementation shortfall
 
