@@ -26,9 +26,9 @@ __all__ = ["BarSeries"]
 class BarSeries(Sequence[Bar]):
     """An immutable, strictly time-ordered collection of bars."""
 
-    __slots__ = ("_bars", "_starts", "_durations")
+    __slots__ = ("_bars", "_starts", "_durations", "_median_duration")
 
-    def __init__(self, bars: Iterable[Bar]) -> None:
+    def __init__(self, bars: Iterable[Bar], *, durations: Sequence[timedelta] | None = None) -> None:
         ordered = tuple(sorted(bars, key=lambda b: b.timestamp))
         if not ordered:
             raise InsufficientDataError("a bar series needs at least one bar")
@@ -36,12 +36,27 @@ class BarSeries(Sequence[Bar]):
         for previous, current in zip(starts, starts[1:], strict=False):
             if previous == current:
                 raise ValidationError(f"duplicate bar timestamp {current!r}")
+        if durations is not None and len(durations) != len(ordered):
+            raise ValidationError(
+                f"got {len(durations)} durations for {len(ordered)} bars"
+            )
         self._bars = ordered
         self._starts = starts
-        self._durations = self._infer_durations(starts)
+        self._durations = (
+            list(durations) if durations is not None else self._infer_durations(starts)
+        )
+        self._median_duration = self._median(self._durations)
 
     @staticmethod
-    def _infer_durations(starts: list[datetime]) -> list[timedelta]:
+    def _median(values: Sequence[timedelta]) -> timedelta:
+        ordered = sorted(values)
+        middle = len(ordered) // 2
+        if len(ordered) % 2 == 1:
+            return ordered[middle]
+        return (ordered[middle - 1] + ordered[middle]) / 2
+
+    @classmethod
+    def _infer_durations(cls, starts: list[datetime]) -> list[timedelta]:
         """Each bar spans until the next one starts.
 
         The final bar has no successor, so it takes the median of the observed
@@ -51,14 +66,7 @@ class BarSeries(Sequence[Bar]):
         if len(starts) == 1:
             return [timedelta(minutes=1)]
         gaps = [b - a for a, b in zip(starts, starts[1:], strict=False)]
-        ordered = sorted(gaps)
-        middle = len(ordered) // 2
-        median = (
-            ordered[middle]
-            if len(ordered) % 2 == 1
-            else (ordered[middle - 1] + ordered[middle]) / 2
-        )
-        return [*gaps, median]
+        return [*gaps, cls._median(gaps)]
 
     # -- sequence protocol --------------------------------------------------
 
@@ -92,7 +100,7 @@ class BarSeries(Sequence[Bar]):
     @property
     def bar_duration(self) -> timedelta:
         """The median bar span, used wherever a nominal granularity is needed."""
-        return self._durations[-1]
+        return self._median_duration
 
     # -- windowing ----------------------------------------------------------
 
@@ -102,14 +110,19 @@ class BarSeries(Sequence[Bar]):
         return lo, max(lo, hi)
 
     def window(self, start: datetime | None = None, end: datetime | None = None) -> BarSeries:
-        """Bars whose start lies in ``[start, end)``."""
+        """Bars whose start lies in ``[start, end)``.
+
+        The parent's bar spans are carried across rather than re-inferred. A
+        slice that ends just before a long gap would otherwise forget that its
+        final bar covered that gap, and silently mis-weight its own TWAP.
+        """
         lo, hi = self._index_range(start, end)
         if lo == hi:
             raise InsufficientDataError(
                 f"no bars in window [{start!r}, {end!r}); series spans "
                 f"[{self.start.isoformat()}, {self.end.isoformat()})"
             )
-        return BarSeries(self._bars[lo:hi])
+        return BarSeries(self._bars[lo:hi], durations=self._durations[lo:hi])
 
     def bar_containing(self, moment: datetime) -> Bar:
         """The bar in progress at ``moment``.
