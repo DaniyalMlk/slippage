@@ -68,6 +68,45 @@ interval VWAP measures whether the order kept pace with the market while it
 traded; the close rewards any buy that finished before a rally. Choosing the
 benchmark is choosing the question.
 
+## Implementation shortfall
+
+A single benchmark says whether an execution was good. Implementation shortfall
+says where the cost came from, by comparing the real portfolio with a paper one
+that bought everything instantly at the decision price.
+
+[`examples/shortfall_worked_example.py`](examples/shortfall_worked_example.py)
+buys 10,000 shares decided at 50.00, arriving at 50.10, filling 7,000 and
+cancelling the rest at 50.50:
+
+```
+component          by hand     library      bps
+delay             1,000.00    1,000.00    20.00
+trading           1,100.00    1,100.00    22.00
+opportunity       1,200.00    1,200.00    24.00
+commission           70.00       70.00     1.40
+fees                  5.00        5.00     0.10
+total             3,375.00    3,375.00    67.50
+```
+
+- **Delay** is the market moving before the order reached it. It is a process
+  cost, owned by whoever routes orders to the desk rather than by the trader.
+- **Trading** is execution against arrival. Given the half-spread it splits into
+  the price of immediacy and the remainder, which is impact and timing.
+- **Opportunity** is the move on shares that never traded. A trader who cuts an
+  order short to save trading cost moves cost here rather than removing it.
+- **Explicit** costs are kept apart so that a cheap commission cannot mask an
+  expensive execution.
+
+Every figure is in basis points of the paper notional, so the components add up
+in bps exactly as they do in currency. On every call the components are
+checked against the direct Perold formula computed by a separate route; a
+mismatch beyond rounding raises rather than returning a number.
+
+Where the unexecuted shares' delay belongs is a convention. The default *order*
+basis charges delay on the whole target, since all of it sat idle; the
+*executed* basis charges it only on shares that traded. Both split the same
+total, which the test suite checks on randomly generated orders.
+
 ## Conventions
 
 **One sign, carried by the side.** `Side.BUY.sign` is `+1` and `Side.SELL.sign`
