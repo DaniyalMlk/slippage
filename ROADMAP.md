@@ -23,11 +23,11 @@ untestable.
 
 ## Phase 3 — Market impact models
 
-- [ ] Linear temporary and permanent impact (Almgren–Chriss parameterisation)
-- [ ] Power-law impact with the square-root special case
-- [ ] Calibration of impact coefficients from realised executions
-- [ ] Goodness-of-fit diagnostics and identifiability warnings
-- [ ] Table-driven tests against analytically integrable cases
+- [x] Linear temporary and permanent impact (Almgren–Chriss parameterisation)
+- [x] Power-law impact with the square-root special case
+- [x] Calibration of impact coefficients from realised executions
+- [x] Goodness-of-fit diagnostics and identifiability warnings
+- [x] Table-driven tests against analytically integrable cases
 
 ## Phase 4 — Optimal execution trajectories
 

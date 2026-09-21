@@ -107,6 +107,64 @@ basis charges delay on the whole target, since all of it sat idle; the
 *executed* basis charges it only on shares that traded. Both split the same
 total, which the test suite checks on randomly generated orders.
 
+## Market impact
+
+Two levels of model, because they answer different questions.
+
+**Rate models** price trading at a given speed, which is what a scheduler
+needs. `LinearImpact` is the Almgren–Chriss parameterisation — permanent
+`g(v) = γv`, temporary `h(v) = ε + ηv` — and `PowerLawImpact` replaces the
+temporary term with `ηv^β`. `schedule_cost` prices any discrete schedule under
+either, split into temporary and permanent cost; the tests check it against the
+hand-integrated cost of uniform schedules and against the Almgren–Chriss
+identity `γ(X² − Σnₖ²)/2` for arbitrary ones.
+
+Permanent impact is linear in both, and there is no way to make it otherwise.
+Huberman and Stanzl (2004) show that nonlinear permanent impact admits
+round-trip manipulation, so an optimiser given such a model would find profit
+in its own footprint.
+
+**The square-root law** `I = Yσ(Q/V)^δ` prices a whole order by its size
+relative to daily volume. It gives the *peak* impact; an order worked at a
+constant rate pays the average of the impact path, `I/(1+δ)` — two thirds of
+the peak under the square root. Quoting the peak as the cost overstates it by
+half.
+
+### Calibration
+
+Every fit returns estimates with standard errors and a list of identifiability
+warnings, also raised as `IdentifiabilityWarning`. Five hundred synthetic orders
+generated from `Y = 0.8`, `δ = 0.5`:
+
+```python
+fit = fit_power_law(participation, cost, volatility)
+fit.y  # 0.814 +/- 0.024
+fit.delta  # 0.503 +/- 0.009
+fit.to_law().expected_cost_bps(1e5, 1e7, 0.02)  # 10.7 bps for 1% of ADV at 2% vol
+```
+
+Forty noisy orders that all sit between 1% and 1.5% of daily volume:
+
+```
+delta = 1.50 +/- 0.84
+ - order sizes span only a 1.47x range; the exponent is not identified below a 4x range — fix delta instead
+ - the exponent 1.500 sits on the search bound (0.05, 1.5); the true optimum may lie outside it
+ - exponent standard error 0.84 exceeds 0.25; the data cannot distinguish a square-root law from a linear one
+```
+
+The exponent is pinned down by how much order sizes *vary*, not by how many
+orders there are, and a fit that returned 1.50 without comment would hand a
+scheduler a number the data never supported. The thresholds behind each
+warning are module constants in `slippage.calibration`, stated so they can be
+argued with. The tests also check that the reported standard errors are honest:
+over repeated synthetic samples the 95% interval contains the true exponent
+between 89% and 99% of the time.
+
+`samples_from_orders` turns executed `Order`s into calibration inputs, measuring
+cost against arrival so that delay does not leak into the impact coefficients.
+Its time unit is a required argument: a rate coefficient fitted per hour and
+used per day is wrong by a factor of the trading day's length, silently.
+
 ## Conventions
 
 **One sign, carried by the side.** `Side.BUY.sign` is `+1` and `Side.SELL.sign`
