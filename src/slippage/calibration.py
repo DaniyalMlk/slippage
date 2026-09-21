@@ -20,6 +20,7 @@ import warnings
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import timedelta
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -41,6 +42,8 @@ __all__ = [
 ]
 
 FloatArray = NDArray[np.float64]
+Floats = Sequence[float] | NDArray[np.floating[Any]]
+"""Anything the fits accept as a column of numbers."""
 
 # Thresholds for the identifiability checks. Each is a judgement about when a
 # fit stops being informative, stated here so it can be argued with.
@@ -79,7 +82,7 @@ class Estimate:
         return low <= truth <= high
 
 
-def _as_array(name: str, values: Sequence[float] | FloatArray) -> FloatArray:
+def _as_array(name: str, values: Floats) -> FloatArray:
     array = np.asarray(values, dtype=np.float64)
     if array.ndim != 1:
         raise CalibrationError(f"{name} must be one-dimensional, got shape {array.shape}")
@@ -125,9 +128,7 @@ class LinearTemporaryFit:
         return LinearImpact(gamma=gamma, eta=self.eta.value, epsilon=self.epsilon.value)
 
 
-def fit_linear_temporary(
-    rates: Sequence[float] | FloatArray, costs_per_share: Sequence[float] | FloatArray
-) -> LinearTemporaryFit:
+def fit_linear_temporary(rates: Floats, costs_per_share: Floats) -> LinearTemporaryFit:
     """Fit the Almgren-Chriss temporary impact line by ordinary least squares.
 
     ``rates`` are average trading rates (shares per unit time, in the unit the
@@ -174,9 +175,7 @@ def fit_linear_temporary(
 # -- permanent impact -------------------------------------------------------
 
 
-def fit_permanent(
-    quantities: Sequence[float] | FloatArray, permanent_moves: Sequence[float] | FloatArray
-) -> Estimate:
+def fit_permanent(quantities: Floats, permanent_moves: Floats) -> Estimate:
     """Fit ``move = gamma * quantity`` through the origin.
 
     ``permanent_moves`` are the price changes that *persisted* after each order
@@ -251,9 +250,9 @@ def _golden_section(
 
 
 def fit_power_law(
-    participation: Sequence[float] | FloatArray,
-    costs: Sequence[float] | FloatArray,
-    volatility: Sequence[float] | FloatArray,
+    participation: Floats,
+    costs: Floats,
+    volatility: Floats,
     *,
     delta: float | None = None,
     bounds: tuple[float, float] = (0.05, 1.5),

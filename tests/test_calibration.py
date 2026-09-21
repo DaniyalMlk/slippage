@@ -6,6 +6,7 @@ from datetime import timedelta
 import numpy as np
 import pytest
 from conftest import make_bar, minute
+from numpy.typing import NDArray
 
 from slippage.calibration import (
     Estimate,
@@ -19,10 +20,12 @@ from slippage.impact import LinearImpact, SquareRootLaw
 from slippage.series import BarSeries
 from slippage.types import Fill, Order, Side
 
+FloatArray = NDArray[np.float64]
+
 
 def linear_sample(
     rng: np.random.Generator, n: int, *, eta: float = 2e-6, epsilon: float = 0.01
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[FloatArray, FloatArray]:
     rates = rng.uniform(1e3, 5e4, n)
     costs = epsilon + eta * rates + rng.normal(0.0, 0.005, n)
     return rates, costs
@@ -37,7 +40,7 @@ def power_sample(
     low: float = 1e-4,
     high: float = 0.1,
     noise: float = 5e-4,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[FloatArray, FloatArray, FloatArray]:
     x = np.exp(rng.uniform(np.log(low), np.log(high), n))
     sigma = rng.uniform(0.01, 0.04, n)
     costs = y * sigma * x**delta + rng.normal(0.0, noise, n)
