@@ -44,6 +44,7 @@ from .impact import (
     schedule_cost,
     uniform_schedule,
 )
+from .scheduling import SchedulePlan, participation_caps, schedule_objective, solve_schedule
 from .series import BarSeries
 from .shortfall import (
     DelayBasis,
@@ -81,6 +82,7 @@ __all__ = [
     "PowerLawFit",
     "PowerLawImpact",
     "ScheduleCost",
+    "SchedulePlan",
     "Score",
     "ShortfallBreakdown",
     "Side",
@@ -104,12 +106,15 @@ __all__ = [
     "linear_trajectory",
     "optimal_trajectory",
     "order_window",
+    "participation_caps",
     "participation_rate",
     "samples_from_orders",
     "schedule_cost",
     "schedule_moments",
+    "schedule_objective",
     "score_order",
     "shortfall_from_market",
+    "solve_schedule",
     "trajectory_from_trades",
     "uniform_schedule",
 ]
