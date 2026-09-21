@@ -44,6 +44,16 @@ from .impact import (
     schedule_cost,
     uniform_schedule,
 )
+from .io import InputError, load_bars, load_orders, write_bars, write_orders
+from .report import (
+    Aggregate,
+    ModelComparison,
+    OrderReport,
+    TcaReport,
+    build_report,
+    compare_to_model,
+    modified_z_scores,
+)
 from .scheduling import SchedulePlan, participation_caps, schedule_objective, solve_schedule
 from .series import BarSeries
 from .shortfall import (
@@ -56,6 +66,7 @@ from .shortfall import (
     shortfall_from_market,
 )
 from .simulate import CostDistribution, simulate_costs, simulate_prices
+from .synthetic import SyntheticBook, synthetic_book
 from .types import Bar, Fill, Order, Side
 from .volume import (
     PovSchedule,
@@ -70,6 +81,7 @@ from .volume import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "Aggregate",
     "Bar",
     "BarSeries",
     "Benchmark",
@@ -85,11 +97,14 @@ __all__ = [
     "HalfLifeSensitivity",
     "IdentifiabilityWarning",
     "ImpactModel",
+    "InputError",
     "InsufficientDataError",
     "LinearImpact",
     "LinearTemporaryFit",
+    "ModelComparison",
     "NoVolumeError",
     "Order",
+    "OrderReport",
     "PovSchedule",
     "PowerLawFit",
     "PowerLawImpact",
@@ -100,13 +115,17 @@ __all__ = [
     "Side",
     "SlippageError",
     "SquareRootLaw",
+    "SyntheticBook",
+    "TcaReport",
     "Trajectory",
     "ValidationError",
     "VolumeProfile",
     "__version__",
     "attribute_fills",
     "benchmark_price",
+    "build_report",
     "closed_form_moments",
+    "compare_to_model",
     "cost_bps",
     "cost_currency",
     "cost_per_share",
@@ -118,6 +137,9 @@ __all__ = [
     "half_life_sensitivity",
     "implementation_shortfall",
     "linear_trajectory",
+    "load_bars",
+    "load_orders",
+    "modified_z_scores",
     "optimal_trajectory",
     "order_window",
     "participation_caps",
@@ -133,8 +155,11 @@ __all__ = [
     "simulate_costs",
     "simulate_prices",
     "solve_schedule",
+    "synthetic_book",
     "trajectory_from_trades",
     "twap_schedule",
     "uniform_schedule",
     "vwap_schedule",
+    "write_bars",
+    "write_orders",
 ]
