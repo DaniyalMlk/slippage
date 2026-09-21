@@ -52,10 +52,8 @@ testpaths = ["tests"]
 addopts = "-q"
 
 [tool.mypy]
-python_version = "3.10"
 strict = true
 files = ["src/slippage", "tests"]
-plugins = []
 
 [[tool.mypy.overrides]]
 module = ["scipy.*"]
