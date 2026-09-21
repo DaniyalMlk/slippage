@@ -249,6 +249,52 @@ continuum, so the programme can match the closed form but not beat it. Each
 period is one vectorised minimisation over a states-by-trades matrix; the
 2,000-lot, ten-period case solves in about a third of a second.
 
+## Volume profiles, benchmark schedules and simulation
+
+`estimate_profile` builds an intraday volume curve from historical sessions.
+It averages each day's volume *fractions* instead of summing volume first: a
+single rebalance day with fifty times normal volume, all at the close, would
+otherwise put 85% of the profile in the last bucket. `twap_schedule`,
+`vwap_schedule` and `pov_schedule` generate the standard benchmarks. Lot
+rounding hands out leftover lots by largest remainder, so a schedule never
+gains or drops a lot. A POV schedule that runs out of volume reports the
+unfilled remainder instead of breaking its participation limit.
+
+`simulate_costs` draws cost distributions under any impact model, on the
+Almgren–Chriss price process. [`examples/strategy_comparison.py`](examples/strategy_comparison.py)
+sells 500,000 shares in one session under four schedules on the same price paths:
+
+```
+strategy       mean        sd   95th pct  unfilled
+TWAP        685,096   256,910  1,106,680         0
+VWAP        817,545   249,927  1,227,047         0
+POV 12%     842,096   217,690  1,198,577         0
+optimal     686,781   250,213  1,097,370         0
+```
+
+The optimal schedule costs almost the same as TWAP on average and has the lower
+95th percentile, which is the trade the risk aversion asks for. VWAP looks
+worst on average, and the reason is the model, not VWAP. Almgren–Chriss assumes
+liquidity is constant through the day, so trading heavily at the open and close
+counts as pure cost. That concentration is the point of VWAP, because those are
+the hours when the market can absorb it. The row shows what the assumption
+costs.
+
+The simulated cost is linear in the Gaussian price shocks. That has three
+consequences worth stating:
+
+- Simulated mean, variance, 95th percentile and expected shortfall all match
+  their closed forms within Monte Carlo error, which is the simulator's main
+  test.
+- **Antithetic sampling makes the mean exact**, since each pair of paths
+  averages to the deterministic cost, but it does little for the tail. Over 400
+  repetitions of 10,000 paths it cut the standard error of the 95th percentile
+  by 7% and of the expected shortfall by 10%. The examples turn it on because it costs nothing, not because it
+  transforms tail estimates.
+- `simulate_prices` produces the unaffected price path and every fill price.
+  The tests rebuild each path's cost from those fills and check it against the
+  direct computation.
+
 ## Conventions
 
 **One sign, carried by the side.** `Side.BUY.sign` is `+1` and `Side.SELL.sign`

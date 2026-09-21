@@ -55,7 +55,17 @@ from .shortfall import (
     participation_rate,
     shortfall_from_market,
 )
+from .simulate import CostDistribution, simulate_costs, simulate_prices
 from .types import Bar, Fill, Order, Side
+from .volume import (
+    PovSchedule,
+    VolumeProfile,
+    estimate_profile,
+    pov_schedule,
+    round_to_lots,
+    twap_schedule,
+    vwap_schedule,
+)
 
 __version__ = "0.1.0"
 
@@ -65,6 +75,7 @@ __all__ = [
     "Benchmark",
     "CalibrationError",
     "ConvergenceError",
+    "CostDistribution",
     "DelayBasis",
     "Estimate",
     "ExecutionProblem",
@@ -79,6 +90,7 @@ __all__ = [
     "LinearTemporaryFit",
     "NoVolumeError",
     "Order",
+    "PovSchedule",
     "PowerLawFit",
     "PowerLawImpact",
     "ScheduleCost",
@@ -90,6 +102,7 @@ __all__ = [
     "SquareRootLaw",
     "Trajectory",
     "ValidationError",
+    "VolumeProfile",
     "__version__",
     "attribute_fills",
     "benchmark_price",
@@ -98,6 +111,7 @@ __all__ = [
     "cost_currency",
     "cost_per_share",
     "efficient_frontier",
+    "estimate_profile",
     "fit_linear_temporary",
     "fit_permanent",
     "fit_power_law",
@@ -108,13 +122,19 @@ __all__ = [
     "order_window",
     "participation_caps",
     "participation_rate",
+    "pov_schedule",
+    "round_to_lots",
     "samples_from_orders",
     "schedule_cost",
     "schedule_moments",
     "schedule_objective",
     "score_order",
     "shortfall_from_market",
+    "simulate_costs",
+    "simulate_prices",
     "solve_schedule",
     "trajectory_from_trades",
+    "twap_schedule",
     "uniform_schedule",
+    "vwap_schedule",
 ]

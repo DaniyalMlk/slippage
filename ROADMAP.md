@@ -46,11 +46,11 @@ untestable.
 
 ## Phase 6 — Volume curves and simulation
 
-- [ ] Intraday volume profile estimation from historical bars
-- [ ] TWAP, VWAP and percentage-of-volume schedule generators
-- [ ] Fill simulator combining impact, drift and volatility
-- [ ] Monte Carlo cost distributions with variance-reduction where it helps
-- [ ] Simulated costs checked against the closed-form mean and variance
+- [x] Intraday volume profile estimation from historical bars
+- [x] TWAP, VWAP and percentage-of-volume schedule generators
+- [x] Fill simulator combining impact, drift and volatility
+- [x] Monte Carlo cost distributions with variance-reduction where it helps
+- [x] Simulated costs checked against the closed-form mean and variance
 
 ## Phase 7 — Reporting and interface
 
