@@ -29,7 +29,7 @@ Two computational choices matter here.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 from .exceptions import ValidationError
@@ -39,6 +39,7 @@ __all__ = [
     "ExecutionProblem",
     "Trajectory",
     "closed_form_moments",
+    "efficient_frontier",
     "linear_trajectory",
     "optimal_trajectory",
     "schedule_moments",
@@ -272,3 +273,15 @@ def closed_form_moments(problem: ExecutionProblem, risk_aversion: float) -> tupl
         / (sinh_kt**2 * sinh_ktau)
     )
     return expected, variance
+
+
+def efficient_frontier(
+    problem: ExecutionProblem, risk_aversions: Iterable[float]
+) -> list[Trajectory]:
+    """Optimal trajectories across a range of risk aversions, in the order given.
+
+    Plotting ``variance`` against ``expected_cost`` traces the efficient
+    frontier: no schedule has both lower expected cost and lower variance than
+    a point on it.
+    """
+    return [optimal_trajectory(problem, lam) for lam in risk_aversions]

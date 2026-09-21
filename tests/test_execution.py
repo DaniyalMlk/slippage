@@ -13,6 +13,7 @@ from slippage.execution import (
     ExecutionProblem,
     _sinh_ratio,
     closed_form_moments,
+    efficient_frontier,
     linear_trajectory,
     optimal_trajectory,
     schedule_moments,
@@ -222,6 +223,36 @@ class TestOptimal:
             assert _sinh_ratio(kappa, remaining, horizon) == pytest.approx(
                 direct, rel=1e-12, abs=1e-300
             )
+
+
+class TestFrontier:
+    def test_frontier_is_monotone(self) -> None:
+        problem = almgren_chriss_example(periods=20)
+        lams = np.logspace(-9, -4, 30)
+        frontier = efficient_frontier(problem, lams)
+        costs = [t.expected_cost for t in frontier]
+        variances = [t.variance for t in frontier]
+        # Higher risk aversion buys lower variance with higher expected cost.
+        assert all(a < b for a, b in pairwise(costs))
+        assert all(a > b for a, b in pairwise(variances))
+
+    def test_frontier_is_convex(self) -> None:
+        problem = almgren_chriss_example(periods=20)
+        frontier = efficient_frontier(problem, np.logspace(-9, -4, 25))
+        v = np.array([t.variance for t in frontier])
+        e = np.array([t.expected_cost for t in frontier])
+        # E as a function of V: slopes are -lambda, increasing towards zero
+        # as V grows, so E is convex in V.
+        slopes = np.diff(e) / np.diff(v)
+        assert np.all(np.diff(slopes[::-1]) > 0)
+
+    def test_frontier_slope_is_minus_lambda(self) -> None:
+        # At the optimum dE/dV = -lambda, the envelope condition.
+        problem = almgren_chriss_example(periods=20)
+        lam = 1e-6
+        a, b = efficient_frontier(problem, [lam * 0.999, lam * 1.001])
+        slope = (b.expected_cost - a.expected_cost) / (b.variance - a.variance)
+        assert slope == pytest.approx(-lam, rel=1e-3)
 
 
 class TestArbitrarySchedules:
