@@ -165,6 +165,48 @@ cost against arrival so that delay does not leak into the impact coefficients.
 Its time unit is a required argument: a rate coefficient fitted per hour and
 used per day is wrong by a factor of the trading day's length, silently.
 
+## Optimal execution
+
+`optimal_trajectory` solves the Almgren–Chriss problem: execute `X` shares over
+`N` intervals minimising `E[cost] + λ·Var[cost]` under linear impact. The
+holdings are `x_j = X sinh(κ(T − t_j)) / sinh(κT)`, with the urgency `κ` solved
+exactly from the discrete relation `2/τ²·(cosh κτ − 1) = λσ²/η̃`.
+
+[`examples/almgren_chriss.py`](examples/almgren_chriss.py) runs the paper's
+own example — a million shares over five days — across risk aversions:
+
+```
+  lambda   kappa  half-life    E[cost]         sd    day 1
+       0   0.000       infd    662,500  1,040,673  200,000
+   1e-07   0.195      5.14d    670,057    961,623  242,118
+   1e-06   0.607      1.65d    911,227    603,431  458,044
+   1e-05   1.727      0.58d  1,845,211    171,712  822,132
+```
+
+The paper reports `κ ≈ 0.6/day, so κT ≈ 3` at `λ = 10⁻⁶`, which the test suite
+checks. The risk-neutral row is the straight line and its cost is the hand
+figure `½γX² + εX + η̃X²/T`. Moving from `λ = 10⁻⁷` to `10⁻⁶` cuts the standard
+deviation of cost by 37% for a 36% rise in its expectation; that exchange rate is
+the efficient frontier, and `efficient_frontier` traces it.
+
+Two computational choices:
+
+- **Moments are summed over the schedule, not taken from the closed form.** The
+  published expressions for `E` and `V` contain `sinh(2κT)` and overflow for an
+  impatient trader long before the trajectory does. They are kept as
+  `closed_form_moments`, and the tests require the two to agree to nine
+  significant figures wherever both are finite.
+- **Holdings switch to a ratio of exponentials above `κT = 20`**, so a
+  schedule with `κT` in the thousands is still finite. The tests check the two
+  forms against the textbook ratio on both sides of the switch.
+
+`half_life_sensitivity` gives the elasticity of the half-life `1/κ` to each
+input by differentiating the discrete relation. In continuous time they are
+exactly `−½` for risk aversion, `−1` for volatility and `+½` for temporary
+impact; with one-day intervals the example gives −0.485, −0.970 and +0.511,
+and the tests check both the analytic values against finite differences and
+their convergence to the limits as the interval shrinks.
+
 ## Conventions
 
 **One sign, carried by the side.** `Side.BUY.sign` is `+1` and `Side.SELL.sign`

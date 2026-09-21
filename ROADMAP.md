@@ -31,11 +31,11 @@ untestable.
 
 ## Phase 4 — Optimal execution trajectories
 
-- [ ] Closed-form Almgren–Chriss trajectory for linear impact
-- [ ] Limiting cases verified: risk neutrality collapses to a straight line
-- [ ] Expected cost and variance of a schedule in closed form
-- [ ] Efficient frontier of execution over risk aversion
-- [ ] Half-life of the trade and its sensitivity to the model parameters
+- [x] Closed-form Almgren–Chriss trajectory for linear impact
+- [x] Limiting cases verified: risk neutrality collapses to a straight line
+- [x] Expected cost and variance of a schedule in closed form
+- [x] Efficient frontier of execution over risk aversion
+- [x] Half-life of the trade and its sensitivity to the model parameters
 
 ## Phase 5 — Constrained scheduling
 
