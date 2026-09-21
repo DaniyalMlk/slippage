@@ -37,9 +37,11 @@ from .impact import LinearImpact, schedule_cost
 
 __all__ = [
     "ExecutionProblem",
+    "HalfLifeSensitivity",
     "Trajectory",
     "closed_form_moments",
     "efficient_frontier",
+    "half_life_sensitivity",
     "linear_trajectory",
     "optimal_trajectory",
     "schedule_moments",
@@ -285,3 +287,49 @@ def efficient_frontier(
     a point on it.
     """
     return [optimal_trajectory(problem, lam) for lam in risk_aversions]
+
+
+@dataclass(frozen=True)
+class HalfLifeSensitivity:
+    """Elasticities of the trade's half-life ``1 / kappa`` to each input.
+
+    Each figure is ``d log(half-life) / d log(parameter)``: an elasticity of
+    ``-0.5`` means a 10% rise in the parameter shortens the half-life by about
+    5%. In the continuous-time limit these are exactly ``-1/2`` for risk
+    aversion, ``-1`` for volatility and ``+1/2`` for temporary impact, and the
+    discrete values approach them as the interval shrinks. Permanent impact
+    enters only through ``eta_tilde`` and so vanishes in that limit.
+    """
+
+    half_life: float
+    risk_aversion: float
+    volatility: float
+    eta: float
+    gamma: float
+
+
+def half_life_sensitivity(problem: ExecutionProblem, risk_aversion: float) -> HalfLifeSensitivity:
+    """Analytic elasticities of the half-life, from the discrete kappa relation.
+
+    With ``K = lambda sigma**2 / eta_tilde`` and ``cosh(kappa tau) = 1 + K tau**2 / 2``,
+    implicit differentiation gives the elasticity of ``kappa`` in ``K`` as
+    ``K tau / (2 kappa sinh(kappa tau))``. The chain rule through ``K`` then
+    gives each parameter's elasticity; the half-life's are their negatives.
+
+    Raises :class:`~slippage.exceptions.ValidationError` for zero risk aversion,
+    where the half-life is infinite and has no elasticity.
+    """
+    if risk_aversion <= 0.0:
+        raise ValidationError("the half-life of a risk-neutral schedule is infinite")
+    kappa = problem.kappa(risk_aversion)
+    tau = problem.tau
+    k_value = risk_aversion * problem.volatility**2 / problem.eta_tilde
+    kappa_in_k = k_value * tau / (2.0 * kappa * math.sinh(kappa * tau))
+    eta_t = problem.eta_tilde
+    return HalfLifeSensitivity(
+        half_life=1.0 / kappa,
+        risk_aversion=-kappa_in_k,
+        volatility=-2.0 * kappa_in_k,
+        eta=kappa_in_k * problem.impact.eta / eta_t,
+        gamma=-kappa_in_k * 0.5 * problem.impact.gamma * tau / eta_t,
+    )

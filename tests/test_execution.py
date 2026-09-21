@@ -14,6 +14,7 @@ from slippage.execution import (
     _sinh_ratio,
     closed_form_moments,
     efficient_frontier,
+    half_life_sensitivity,
     linear_trajectory,
     optimal_trajectory,
     schedule_moments,
@@ -269,3 +270,54 @@ class TestArbitrarySchedules:
             schedule_moments(problem, [1e6])
         with pytest.raises(ValidationError, match="not the quantity"):
             schedule_moments(problem, [1e5] * 5)
+
+
+class TestHalfLifeSensitivity:
+    @staticmethod
+    def half_life(**overrides: float) -> float:
+        params = {"lam": 1e-6, "sigma": 0.95, "eta": 2.5e-6, "gamma": 2.5e-7}
+        params.update(overrides)
+        problem = ExecutionProblem(
+            quantity=1e6,
+            horizon=5.0,
+            periods=5,
+            volatility=params["sigma"],
+            impact=LinearImpact(gamma=params["gamma"], eta=params["eta"], epsilon=0.0625),
+        )
+        return 1.0 / problem.kappa(params["lam"])
+
+    @pytest.mark.parametrize(
+        ("field", "key", "base"),
+        [
+            ("risk_aversion", "lam", 1e-6),
+            ("volatility", "sigma", 0.95),
+            ("eta", "eta", 2.5e-6),
+            ("gamma", "gamma", 2.5e-7),
+        ],
+    )
+    def test_matches_central_differences(self, field: str, key: str, base: float) -> None:
+        h = 1e-5
+        up = self.half_life(**{key: base * math.exp(h)})
+        down = self.half_life(**{key: base * math.exp(-h)})
+        numeric = (math.log(up) - math.log(down)) / (2 * h)
+        analytic = getattr(half_life_sensitivity(almgren_chriss_example(), 1e-6), field)
+        assert analytic == pytest.approx(numeric, rel=1e-6)
+
+    def test_approaches_the_continuous_limit(self) -> None:
+        # As tau -> 0 the discrete relation becomes kappa^2 = lambda sigma^2 / eta.
+        fine = half_life_sensitivity(almgren_chriss_example(periods=100_000), 1e-6)
+        assert fine.risk_aversion == pytest.approx(-0.5, abs=1e-4)
+        assert fine.volatility == pytest.approx(-1.0, abs=1e-4)
+        assert fine.eta == pytest.approx(0.5, abs=1e-4)
+        assert fine.gamma == pytest.approx(0.0, abs=1e-4)
+
+    def test_coarse_intervals_move_away_from_the_limit(self) -> None:
+        coarse = half_life_sensitivity(almgren_chriss_example(periods=5), 1e-6)
+        # With one-day intervals and kappa tau ~ 0.6 the elasticity to risk
+        # aversion is noticeably smaller in magnitude than a half.
+        assert -0.5 < coarse.risk_aversion < -0.45
+        assert coarse.half_life == pytest.approx(1.0 / almgren_chriss_example().kappa(1e-6))
+
+    def test_risk_neutral_has_no_sensitivity(self) -> None:
+        with pytest.raises(ValidationError, match="infinite"):
+            half_life_sensitivity(almgren_chriss_example(), 0.0)
