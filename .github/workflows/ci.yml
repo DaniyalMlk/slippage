@@ -50,3 +50,6 @@ jobs:
           python -m venv /tmp/clean
           /tmp/clean/bin/pip install dist/*.whl
           cd /tmp && /tmp/clean/bin/python -c "import slippage; print(slippage.__version__)"
+          /tmp/clean/bin/slippage sample-data --out /tmp/book
+          /tmp/clean/bin/slippage tca --orders /tmp/book/orders.csv --fills /tmp/book/fills.csv --bars /tmp/book/bars.csv
+          /tmp/clean/bin/slippage frontier --quantity 1e6 --horizon 5 --periods 5 --volatility 0.95 --gamma 2.5e-7 --eta 2.5e-6

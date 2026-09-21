@@ -40,6 +40,9 @@ dev = [
     "scipy>=1.10",
 ]
 
+[project.scripts]
+slippage = "slippage.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/DaniyalMlk/slippage"
 Issues = "https://github.com/DaniyalMlk/slippage/issues"

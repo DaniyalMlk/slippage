@@ -54,8 +54,8 @@ untestable.
 
 ## Phase 7 — Reporting and interface
 
-- [ ] Cost attribution report across a set of orders
-- [ ] Outlier detection and peer comparison statistics
-- [ ] Command line interface over the whole pipeline
-- [ ] End-to-end worked example from raw fills to a scheduling recommendation
-- [ ] README covering usage, conventions and the design decisions that mattered
+- [x] Cost attribution report across a set of orders
+- [x] Outlier detection and comparison against a fitted impact model
+- [x] Command line interface over the whole pipeline
+- [x] End-to-end worked example from raw fills to a scheduling recommendation
+- [x] README covering usage, conventions and the design decisions that mattered
