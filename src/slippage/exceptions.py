@@ -10,6 +10,7 @@ from __future__ import annotations
 __all__ = [
     "CalibrationError",
     "ConvergenceError",
+    "IdentifiabilityWarning",
     "InsufficientDataError",
     "NoVolumeError",
     "SlippageError",
@@ -44,3 +45,13 @@ class CalibrationError(SlippageError):
 
 class ConvergenceError(SlippageError):
     """An iterative routine failed to reach its tolerance."""
+
+
+class IdentifiabilityWarning(UserWarning):
+    """The data cannot pin down a fitted parameter.
+
+    A warning rather than an error because the point estimate is still the
+    best available; what cannot be trusted is its precision. The same messages
+    are also attached to the fit result, so a caller who has silenced warnings
+    can still inspect them.
+    """
