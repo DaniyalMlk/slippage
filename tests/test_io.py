@@ -3,9 +3,11 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from slippage.io import InputError, load_bars, load_orders
+from slippage.io import InputError, load_bars, load_orders, write_bars, write_orders
+from slippage.synthetic import synthetic_book
 from slippage.types import Side
 
 ORDERS = """order_id,symbol,side,quantity,decision_time,arrival_time,decision_price
@@ -113,3 +115,12 @@ class TestBars:
         dup = BARS + "ACME,2026-03-02T09:30:00,50.00,50.03,49.98,50.02,1\n"
         with pytest.raises(InputError, match="ACME: duplicate"):
             load_bars(write(tmp_path, "b.csv", dup))
+
+
+def test_round_trip_preserves_a_book_exactly(tmp_path: Path) -> None:
+    book = synthetic_book(np.random.default_rng(4), symbols=3, orders=15)
+    write_orders(book.orders, tmp_path / "o.csv", tmp_path / "f.csv")
+    write_bars(book.bars, tmp_path / "b.csv")
+    assert load_orders(tmp_path / "o.csv", tmp_path / "f.csv") == book.orders
+    loaded = load_bars(tmp_path / "b.csv")
+    assert {s: list(b) for s, b in loaded.items()} == {s: list(b) for s, b in book.bars.items()}

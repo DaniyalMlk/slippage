@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import csv
 from collections import defaultdict
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import TypeVar
@@ -28,7 +28,14 @@ from .exceptions import SlippageError, ValidationError
 from .series import BarSeries
 from .types import Bar, Fill, Order, Side
 
-__all__ = ["InputError", "load_bars", "load_orders", "read_rows"]
+__all__ = [
+    "InputError",
+    "load_bars",
+    "load_orders",
+    "read_rows",
+    "write_bars",
+    "write_orders",
+]
 
 T = TypeVar("T")
 
@@ -140,3 +147,58 @@ def load_bars(path: str | Path) -> dict[str, BarSeries]:
         except ValidationError as error:
             raise InputError(f"{source}: {symbol}: {error}") from None
     return series
+
+
+def write_orders(
+    orders: Mapping[str, Order], orders_path: str | Path, fills_path: str | Path
+) -> None:
+    """Write orders and their fills in the format :func:`load_orders` reads."""
+    with Path(orders_path).open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow([*ORDER_COLUMNS, "decision_price"])
+        for order_id, order in orders.items():
+            writer.writerow(
+                [
+                    order_id,
+                    order.symbol,
+                    order.side.value,
+                    repr(order.quantity),
+                    order.decision_time.isoformat(),
+                    order.arrival_time.isoformat(),
+                    "" if order.decision_price is None else repr(order.decision_price),
+                ]
+            )
+    with Path(fills_path).open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow([*FILL_COLUMNS, "commission"])
+        for order_id, order in orders.items():
+            for fill in order.fills:
+                writer.writerow(
+                    [
+                        order_id,
+                        fill.timestamp.isoformat(),
+                        repr(fill.quantity),
+                        repr(fill.price),
+                        repr(fill.commission),
+                    ]
+                )
+
+
+def write_bars(series: Mapping[str, BarSeries], path: str | Path) -> None:
+    """Write bars in the format :func:`load_bars` reads."""
+    with Path(path).open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(BAR_COLUMNS)
+        for symbol, bars in series.items():
+            for bar in bars:
+                writer.writerow(
+                    [
+                        symbol,
+                        bar.timestamp.isoformat(),
+                        repr(bar.open),
+                        repr(bar.high),
+                        repr(bar.low),
+                        repr(bar.close),
+                        repr(bar.volume),
+                    ]
+                )
