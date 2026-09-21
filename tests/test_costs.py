@@ -15,9 +15,9 @@ class TestSignConvention:
     @pytest.mark.parametrize(
         ("side", "execution", "reference", "expected"),
         [
-            (Side.BUY, 101.0, 100.0, 1.0),    # paid up: a cost
-            (Side.BUY, 99.0, 100.0, -1.0),    # bought cheap: a saving
-            (Side.SELL, 99.0, 100.0, 1.0),    # sold cheap: a cost
+            (Side.BUY, 101.0, 100.0, 1.0),  # paid up: a cost
+            (Side.BUY, 99.0, 100.0, -1.0),  # bought cheap: a saving
+            (Side.SELL, 99.0, 100.0, 1.0),  # sold cheap: a cost
             (Side.SELL, 101.0, 100.0, -1.0),  # sold rich: a saving
             (Side.BUY, 100.0, 100.0, 0.0),
             (Side.SELL, 100.0, 100.0, 0.0),

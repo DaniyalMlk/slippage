@@ -28,7 +28,7 @@ from enum import Enum
 
 from .exceptions import ValidationError
 
-__all__ = ["Side", "Fill", "Order", "Bar"]
+__all__ = ["Bar", "Fill", "Order", "Side"]
 
 # Quantities are floats because odd lots, currency notionals and fractional
 # shares all occur; comparisons therefore need a tolerance rather than ``==``.
@@ -101,9 +101,7 @@ class Fill:
     def __post_init__(self) -> None:
         object.__setattr__(self, "quantity", _check_positive("fill quantity", self.quantity))
         object.__setattr__(self, "price", _check_positive("fill price", self.price))
-        object.__setattr__(
-            self, "commission", _check_non_negative("commission", self.commission)
-        )
+        object.__setattr__(self, "commission", _check_non_negative("commission", self.commission))
 
     @property
     def notional(self) -> float:
@@ -137,16 +135,14 @@ class Order:
         object.__setattr__(self, "quantity", _check_positive("order quantity", self.quantity))
         if self.arrival_time < self.decision_time:
             raise ValidationError(
-                f"arrival_time {self.arrival_time!r} precedes "
-                f"decision_time {self.decision_time!r}"
+                f"arrival_time {self.arrival_time!r} precedes decision_time {self.decision_time!r}"
             )
         fills = tuple(sorted(self.fills, key=lambda f: f.timestamp))
         object.__setattr__(self, "fills", fills)
         for fill in fills:
             if fill.timestamp < self.decision_time:
                 raise ValidationError(
-                    f"fill at {fill.timestamp!r} precedes decision_time "
-                    f"{self.decision_time!r}"
+                    f"fill at {fill.timestamp!r} precedes decision_time {self.decision_time!r}"
                 )
         filled = sum(f.quantity for f in fills)
         if filled > self.quantity + _QTY_TOL:

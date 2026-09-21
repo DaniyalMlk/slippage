@@ -16,7 +16,7 @@ from .exceptions import ValidationError
 from .series import BarSeries
 from .types import Order
 
-__all__ = ["Benchmark", "order_window", "benchmark_price"]
+__all__ = ["Benchmark", "benchmark_price", "order_window"]
 
 
 class Benchmark(Enum):

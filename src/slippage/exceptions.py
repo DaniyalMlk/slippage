@@ -8,12 +8,12 @@ single ``except`` clause.
 from __future__ import annotations
 
 __all__ = [
-    "SlippageError",
-    "ValidationError",
-    "NoVolumeError",
-    "InsufficientDataError",
     "CalibrationError",
     "ConvergenceError",
+    "InsufficientDataError",
+    "NoVolumeError",
+    "SlippageError",
+    "ValidationError",
 ]
 
 

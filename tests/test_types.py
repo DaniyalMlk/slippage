@@ -124,9 +124,7 @@ class TestOrder:
             quantity=1.0,
             decision_time=minute(0),
             arrival_time=minute(0),
-            fills=tuple(
-                Fill(timestamp=minute(i), quantity=third, price=10.0) for i in range(3)
-            ),
+            fills=tuple(Fill(timestamp=minute(i), quantity=third, price=10.0) for i in range(3)),
         )
         assert order.is_complete
         assert order.unfilled_quantity == 0.0
@@ -195,9 +193,7 @@ class TestOrder:
         assert order.side is Side.SELL
 
     def test_with_fills_preserves_the_rest(self, simple_order: Order) -> None:
-        replaced = simple_order.with_fills(
-            (Fill(timestamp=minute(3), quantity=100.0, price=99.0),)
-        )
+        replaced = simple_order.with_fills((Fill(timestamp=minute(3), quantity=100.0, price=99.0),))
         assert replaced.symbol == simple_order.symbol
         assert replaced.decision_price == simple_order.decision_price
         assert replaced.filled_quantity == pytest.approx(100.0)

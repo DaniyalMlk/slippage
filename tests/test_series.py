@@ -54,8 +54,14 @@ class TestWindowing:
 class TestPriceAt:
     def test_price_at_is_the_open_of_the_bar_in_progress(self) -> None:
         bars = [
-            Bar(timestamp=minute(n), open=100.0 + n, high=110.0 + n, low=99.0 + n,
-                close=100.5 + n, volume=1_000.0)
+            Bar(
+                timestamp=minute(n),
+                open=100.0 + n,
+                high=110.0 + n,
+                low=99.0 + n,
+                close=100.5 + n,
+                volume=1_000.0,
+            )
             for n in range(5)
         ]
         series = BarSeries(bars)
@@ -80,16 +86,20 @@ class TestAggregates:
 
     def test_vwap_weights_by_volume(self) -> None:
         series = BarSeries(
-            [make_bar(0, 100.0, spread=0.0, volume=1_000.0),
-             make_bar(1, 110.0, spread=0.0, volume=9_000.0)]
+            [
+                make_bar(0, 100.0, spread=0.0, volume=1_000.0),
+                make_bar(1, 110.0, spread=0.0, volume=9_000.0),
+            ]
         )
         # 10% of the volume at 100 and 90% at 110.
         assert series.vwap() == pytest.approx(109.0)
 
     def test_twap_ignores_volume(self) -> None:
         series = BarSeries(
-            [make_bar(0, 100.0, spread=0.0, volume=1_000.0),
-             make_bar(1, 110.0, spread=0.0, volume=9_000.0)]
+            [
+                make_bar(0, 100.0, spread=0.0, volume=1_000.0),
+                make_bar(1, 110.0, spread=0.0, volume=9_000.0),
+            ]
         )
         assert series.twap() == pytest.approx(105.0)
 
@@ -102,9 +112,7 @@ class TestAggregates:
             make_bar(11, 110.0, spread=0.0),
         ]
         series = BarSeries(bars)
-        assert series.twap(minute(0), minute(11)) == pytest.approx(
-            (100.0 * 60 + 110.0 * 600) / 660
-        )
+        assert series.twap(minute(0), minute(11)) == pytest.approx((100.0 * 60 + 110.0 * 600) / 660)
 
     def test_a_window_keeps_the_parent_bar_spans(self) -> None:
         # Regression: slicing used to re-infer spans from the slice alone, so a

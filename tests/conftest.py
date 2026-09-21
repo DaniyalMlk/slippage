@@ -37,8 +37,10 @@ def flat_bars() -> list[Bar]:
 @pytest.fixture
 def rising_bars() -> list[Bar]:
     """Ten one-minute bars rising by 0.10 a minute from 100.00."""
-    return [make_bar(n, 100.0 + 0.10 * n, open_=100.0 + 0.10 * (n - 1) if n else 100.0)
-            for n in range(10)]
+    return [
+        make_bar(n, 100.0 + 0.10 * n, open_=100.0 + 0.10 * (n - 1) if n else 100.0)
+        for n in range(10)
+    ]
 
 
 @pytest.fixture

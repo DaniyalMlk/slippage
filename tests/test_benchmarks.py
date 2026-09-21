@@ -23,9 +23,7 @@ class TestOrderWindow:
         # starting at minute 4 and therefore end at minute 5.
         assert end == minute(5)
 
-    def test_unfilled_order_is_scored_over_the_rest_of_the_series(
-        self, series: BarSeries
-    ) -> None:
+    def test_unfilled_order_is_scored_over_the_rest_of_the_series(self, series: BarSeries) -> None:
         order = Order(
             symbol="ACME",
             side=Side.BUY,
@@ -66,9 +64,7 @@ class TestBenchmarkPrice:
         assert simple_order.decision_price == 100.0
         assert benchmark_price(simple_order, series, Benchmark.DECISION) == 100.0
 
-    def test_decision_falls_back_to_the_market_at_decision_time(
-        self, series: BarSeries
-    ) -> None:
+    def test_decision_falls_back_to_the_market_at_decision_time(self, series: BarSeries) -> None:
         order = Order(
             symbol="ACME",
             side=Side.BUY,
@@ -76,9 +72,7 @@ class TestBenchmarkPrice:
             decision_time=minute(3),
             arrival_time=minute(5),
         )
-        assert benchmark_price(order, series, Benchmark.DECISION) == pytest.approx(
-            series[3].open
-        )
+        assert benchmark_price(order, series, Benchmark.DECISION) == pytest.approx(series[3].open)
 
     def test_interval_vwap_uses_only_the_order_window(
         self, simple_order: Order, series: BarSeries
@@ -91,9 +85,7 @@ class TestBenchmarkPrice:
         # trending day, which is the reason the window matters.
         assert abs(expected - series.vwap()) > 0.1
 
-    def test_interval_twap_close_and_open(
-        self, simple_order: Order, series: BarSeries
-    ) -> None:
+    def test_interval_twap_close_and_open(self, simple_order: Order, series: BarSeries) -> None:
         assert benchmark_price(simple_order, series, Benchmark.INTERVAL_TWAP) == pytest.approx(
             series.twap(minute(1), minute(5))
         )

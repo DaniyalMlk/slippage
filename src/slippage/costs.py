@@ -13,11 +13,11 @@ from .types import Side
 
 __all__ = [
     "BPS_PER_UNIT",
-    "cost_per_share",
-    "cost_currency",
     "cost_bps",
-    "to_bps",
+    "cost_currency",
+    "cost_per_share",
     "from_bps",
+    "to_bps",
 ]
 
 BPS_PER_UNIT = 10_000.0

@@ -16,6 +16,7 @@ from __future__ import annotations
 import bisect
 from collections.abc import Iterable, Iterator, Sequence
 from datetime import datetime, timedelta
+from itertools import pairwise
 
 from .exceptions import InsufficientDataError, NoVolumeError, ValidationError
 from .types import Bar
@@ -26,20 +27,20 @@ __all__ = ["BarSeries"]
 class BarSeries(Sequence[Bar]):
     """An immutable, strictly time-ordered collection of bars."""
 
-    __slots__ = ("_bars", "_starts", "_durations", "_median_duration")
+    __slots__ = ("_bars", "_durations", "_median_duration", "_starts")
 
-    def __init__(self, bars: Iterable[Bar], *, durations: Sequence[timedelta] | None = None) -> None:
+    def __init__(
+        self, bars: Iterable[Bar], *, durations: Sequence[timedelta] | None = None
+    ) -> None:
         ordered = tuple(sorted(bars, key=lambda b: b.timestamp))
         if not ordered:
             raise InsufficientDataError("a bar series needs at least one bar")
         starts = [b.timestamp for b in ordered]
-        for previous, current in zip(starts, starts[1:], strict=False):
+        for previous, current in pairwise(starts):
             if previous == current:
                 raise ValidationError(f"duplicate bar timestamp {current!r}")
         if durations is not None and len(durations) != len(ordered):
-            raise ValidationError(
-                f"got {len(durations)} durations for {len(ordered)} bars"
-            )
+            raise ValidationError(f"got {len(durations)} durations for {len(ordered)} bars")
         self._bars = ordered
         self._starts = starts
         self._durations = (
@@ -65,7 +66,7 @@ class BarSeries(Sequence[Bar]):
         """
         if len(starts) == 1:
             return [timedelta(minutes=1)]
-        gaps = [b - a for a, b in zip(starts, starts[1:], strict=False)]
+        gaps = [b - a for a, b in pairwise(starts)]
         return [*gaps, cls._median(gaps)]
 
     # -- sequence protocol --------------------------------------------------
