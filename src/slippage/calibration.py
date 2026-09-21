@@ -17,22 +17,27 @@ from __future__ import annotations
 
 import math
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import timedelta
 
 import numpy as np
 from numpy.typing import NDArray
 
 from .exceptions import CalibrationError, IdentifiabilityWarning, InsufficientDataError
 from .impact import LinearImpact, SquareRootLaw
+from .series import BarSeries
+from .types import Order
 
 __all__ = [
     "Estimate",
+    "ExecutionSample",
     "LinearTemporaryFit",
     "PowerLawFit",
     "fit_linear_temporary",
     "fit_permanent",
     "fit_power_law",
+    "samples_from_orders",
 ]
 
 FloatArray = NDArray[np.float64]
@@ -350,3 +355,78 @@ def fit_power_law(
         residuals=residuals,
         warnings=_emit(messages),
     )
+
+
+# -- from executions --------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ExecutionSample:
+    """One completed order reduced to the regressors the fits need."""
+
+    symbol: str
+    quantity: float
+    participation: float
+    """Executed quantity as a fraction of daily volume."""
+    rate: float
+    """Executed quantity per ``time_unit`` over the order's trading window."""
+    cost_per_share: float
+    """Signed cost against arrival, in price units; positive is a cost."""
+    cost_fraction: float
+    """``cost_per_share`` as a fraction of the arrival price."""
+    volatility: float
+    """Daily volatility of the stock, as a fraction."""
+
+
+def samples_from_orders(
+    orders: Iterable[Order],
+    series: Mapping[str, BarSeries],
+    daily_volume: Mapping[str, float],
+    daily_volatility: Mapping[str, float],
+    *,
+    time_unit: timedelta,
+) -> list[ExecutionSample]:
+    """Turn executed orders into calibration samples.
+
+    Cost is measured against the arrival price, so it is the *trading*
+    component of implementation shortfall: delay is not impact, and including
+    it would bias every coefficient by whatever the market did before the
+    order arrived. Orders with no fills contribute nothing and are skipped.
+
+    ``time_unit`` has no default on purpose. A rate coefficient fitted per
+    hour and used per day is wrong by the ratio of the two, silently.
+    """
+    if time_unit <= timedelta(0):
+        raise CalibrationError(f"time_unit must be positive, got {time_unit!r}")
+    samples: list[ExecutionSample] = []
+    for order in orders:
+        if not order.fills:
+            continue
+        try:
+            bars = series[order.symbol]
+            volume = daily_volume[order.symbol]
+            vol = daily_volatility[order.symbol]
+        except KeyError as missing:
+            raise CalibrationError(f"no market data for {missing.args[0]!r}") from None
+        if volume <= 0.0 or vol <= 0.0:
+            raise CalibrationError(
+                f"daily volume and volatility for {order.symbol!r} must be positive"
+            )
+        arrival = bars.price_at(order.arrival_time)
+        last = order.last_fill_time
+        assert last is not None
+        span = bars.end_of_bar_containing(last) - order.arrival_time
+        rate = order.filled_quantity / (span / time_unit)
+        cost = order.side.sign * (order.average_price - arrival)
+        samples.append(
+            ExecutionSample(
+                symbol=order.symbol,
+                quantity=order.filled_quantity,
+                participation=order.filled_quantity / volume,
+                rate=rate,
+                cost_per_share=cost,
+                cost_fraction=cost / arrival,
+                volatility=vol,
+            )
+        )
+    return samples

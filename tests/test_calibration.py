@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 import warnings
+from datetime import timedelta
 
 import numpy as np
 import pytest
+from conftest import make_bar, minute
 
 from slippage.calibration import (
     Estimate,
     fit_linear_temporary,
     fit_permanent,
     fit_power_law,
+    samples_from_orders,
 )
 from slippage.exceptions import CalibrationError, IdentifiabilityWarning, InsufficientDataError
 from slippage.impact import LinearImpact, SquareRootLaw
+from slippage.series import BarSeries
+from slippage.types import Fill, Order, Side
 
 
 def linear_sample(
@@ -234,3 +239,105 @@ class TestPowerLaw:
         x, costs, sigma = power_sample(rng, 50)
         with pytest.raises(CalibrationError, match="bounds"):
             fit_power_law(x, costs, sigma, bounds=(1.0, 0.5))
+
+
+class TestSamplesFromOrders:
+    @staticmethod
+    def market(price: float = 100.0) -> BarSeries:
+        return BarSeries([make_bar(n, price, spread=0.01, volume=25_000.0) for n in range(390)])
+
+    def test_rate_participation_and_cost(self) -> None:
+        bars = self.market()
+        order = Order(
+            symbol="ACME",
+            side=Side.SELL,
+            quantity=6_000.0,
+            decision_time=minute(5),
+            arrival_time=minute(10),
+            fills=(
+                Fill(timestamp=minute(12), quantity=2_000.0, price=99.95),
+                Fill(timestamp=minute(39) + timedelta(seconds=30), quantity=4_000.0, price=99.92),
+            ),
+        )
+        (sample,) = samples_from_orders(
+            [order],
+            {"ACME": bars},
+            {"ACME": 9_750_000.0},
+            {"ACME": 0.02},
+            time_unit=timedelta(hours=1),
+        )
+        # Arrival at minute 10 to the end of the bar holding the last fill
+        # (minute 40) is half an hour, so 6,000 shares is 12,000 an hour.
+        assert sample.rate == pytest.approx(12_000.0)
+        assert sample.participation == pytest.approx(6_000.0 / 9_750_000.0)
+        average = (2_000 * 99.95 + 4_000 * 99.92) / 6_000
+        # A sell below arrival is a positive cost.
+        assert sample.cost_per_share == pytest.approx(100.0 - average)
+        assert sample.cost_fraction == pytest.approx((100.0 - average) / 100.0)
+        assert sample.volatility == 0.02
+
+    def test_unfilled_orders_are_skipped(self) -> None:
+        order = Order(
+            symbol="ACME",
+            side=Side.BUY,
+            quantity=100.0,
+            decision_time=minute(0),
+            arrival_time=minute(1),
+        )
+        assert (
+            samples_from_orders(
+                [order],
+                {"ACME": self.market()},
+                {"ACME": 1e6},
+                {"ACME": 0.02},
+                time_unit=timedelta(days=1),
+            )
+            == []
+        )
+
+    def test_missing_market_data_is_named(self, simple_order: Order) -> None:
+        with pytest.raises(CalibrationError, match="ACME"):
+            samples_from_orders([simple_order], {}, {}, {}, time_unit=timedelta(days=1))
+
+    def test_time_unit_must_be_positive(self, simple_order: Order) -> None:
+        with pytest.raises(CalibrationError, match="time_unit"):
+            samples_from_orders([simple_order], {}, {}, {}, time_unit=timedelta(0))
+
+    def test_end_to_end_recovery_from_orders(self) -> None:
+        """Synthesise executions obeying a square-root law and fit it back."""
+        rng = np.random.default_rng(314)
+        bars = self.market()
+        daily_volume = 390 * 25_000.0
+        orders, series, volumes, vols = [], {}, {}, {}
+        for i in range(400):
+            symbol = f"S{i:03d}"
+            x = float(np.exp(rng.uniform(np.log(1e-4), np.log(5e-2))))
+            sigma = float(rng.uniform(0.01, 0.04))
+            quantity = x * daily_volume
+            cost = 0.6 * sigma * x**0.5 + float(rng.normal(0.0, 3e-4))
+            side = Side.BUY if i % 2 == 0 else Side.SELL
+            orders.append(
+                Order(
+                    symbol=symbol,
+                    side=side,
+                    quantity=quantity,
+                    decision_time=minute(0),
+                    arrival_time=minute(30),
+                    fills=(
+                        Fill(
+                            timestamp=minute(90),
+                            quantity=quantity,
+                            price=100.0 * (1.0 + side.sign * cost),
+                        ),
+                    ),
+                )
+            )
+            series[symbol], volumes[symbol], vols[symbol] = bars, daily_volume, sigma
+        samples = samples_from_orders(orders, series, volumes, vols, time_unit=timedelta(days=1))
+        fit = fit_power_law(
+            [s.participation for s in samples],
+            [s.cost_fraction for s in samples],
+            [s.volatility for s in samples],
+        )
+        assert fit.delta.covers(0.5, z=3.0)
+        assert fit.y.covers(0.6, z=3.0)
