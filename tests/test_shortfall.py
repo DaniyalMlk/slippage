@@ -296,3 +296,19 @@ class TestFromMarket:
         result = shortfall_from_market(order, trending, final_price=51.0)
         assert result.decision_price == 50.0
         assert result.final_price == 51.0
+
+
+def test_invariant_check_tolerates_rounding_when_components_cancel() -> None:
+    # Regression: the self-check compared the rounding error against the size
+    # of the *total*. Here delay and opportunity cancel to ~1e-14, far below
+    # the rounding error in either term, and a correct result was rejected.
+    order = Order(
+        symbol="X",
+        side=Side.BUY,
+        quantity=100.0,
+        decision_time=datetime(2026, 1, 5, 9, 30),
+        arrival_time=datetime(2026, 1, 5, 9, 45),
+        decision_price=1.0000000000000002,
+    )
+    result = implementation_shortfall(order, arrival_price=2.0, final_price=1.0)
+    assert result.total == pytest.approx(0.0, abs=1e-12)

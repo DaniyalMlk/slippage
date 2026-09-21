@@ -58,8 +58,10 @@ __all__ = [
 
 # Relative tolerance for the internal check that the components sum to the
 # total. Both sides are computed from the same inputs by different routes, so
-# any disagreement beyond rounding is a bug rather than a data problem.
-_SUM_RTOL = 1e-9
+# any disagreement beyond rounding is a bug rather than a data problem. It is
+# relative to the size of the *terms*, not of the result: when the components
+# nearly cancel, the total can be far smaller than the rounding error in each.
+_SUM_RTOL = 1e-12
 
 
 class DelayBasis(Enum):
@@ -235,7 +237,7 @@ def implementation_shortfall(
 
     # The direct Perold formula, computed independently of the split.
     direct = s * (notional - q * p_d) + s * unfilled * (p_n - p_d) + order.total_commission + fees
-    scale = max(abs(direct), x * p_d * 1e-12, 1e-12)
+    scale = x * max(p_d, p_0, p_n) + notional + order.total_commission + fees
     if abs(breakdown.total - direct) > _SUM_RTOL * scale:
         raise SlippageError(
             f"shortfall components sum to {breakdown.total!r} but the direct formula "
