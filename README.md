@@ -207,6 +207,48 @@ impact; with one-day intervals the example gives −0.485, −0.970 and +0.511,
 and the tests check both the analytic values against finite differences and
 their convergence to the limits as the interval shrinks.
 
+## Constrained schedules
+
+The closed form needs linear impact and no constraints. `solve_schedule` solves
+the same mean-variance problem by backward dynamic programming over
+`(period, remaining lots)`, for any impact model and with per-period
+participation caps, minimum trade floors and lot sizes.
+[`examples/constrained_schedule.py`](examples/constrained_schedule.py) works a
+million shares under square-root impact in trading rate, with and without a 5%
+participation cap:
+
+```
+period     volume       cap      free    capped
+     0  3,000,000   150,000   461,000   150,000
+     1  2,000,000   100,000   215,000   100,000
+     2  3,000,000   150,000   115,000   150,000
+     ...
+     9  2,000,000   100,000    13,000    42,000
+
+objective E + lambda V: free 1,203,249, capped 1,694,069
+```
+
+The cap binds for the first six periods and the programme then eases off, rather
+than spreading the order evenly, because holding risk still argues for
+finishing early.
+
+The solution is a **policy** over every state, not one path, so re-optimising
+after fills go off plan is a lookup: `plan.trades_from(period, remaining)`
+returns the best schedule for the rest of the horizon from wherever the order
+actually is. Following the policy from the planned state reproduces the rest of
+the plan exactly, which the tests check as time consistency.
+
+Correctness is checked two ways that do not share code with the solver. On
+small problems the objective is compared with exhaustive enumeration of every
+possible schedule — for linear, square-root and convex impact, at three risk
+aversions, and on Hypothesis-generated combinations of caps and floors,
+including infeasible ones. On a 2,000-lot grid with slack constraints and
+linear impact, every trade lands within one lot of the Almgren–Chriss closed
+form, and the objective is never below it: the grid is a subset of the
+continuum, so the programme can match the closed form but not beat it. Each
+period is one vectorised minimisation over a states-by-trades matrix; the
+2,000-lot, ten-period case solves in about a third of a second.
+
 ## Conventions
 
 **One sign, carried by the side.** `Side.BUY.sign` is `+1` and `Side.SELL.sign`
