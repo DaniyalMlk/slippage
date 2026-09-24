@@ -64,6 +64,7 @@ from .shortfall import (
     implementation_shortfall,
     participation_rate,
     shortfall_from_market,
+    shortfall_from_totals,
 )
 from .simulate import CostDistribution, simulate_costs, simulate_prices
 from .synthetic import SyntheticBook, synthetic_book
@@ -152,6 +153,7 @@ __all__ = [
     "schedule_objective",
     "score_order",
     "shortfall_from_market",
+    "shortfall_from_totals",
     "simulate_costs",
     "simulate_prices",
     "solve_schedule",
