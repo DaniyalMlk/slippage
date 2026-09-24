@@ -1,14 +1,24 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+# 77 is the floor for the SPDX `license` expression and `license-files` below.
+# Anything older reads `license = "MIT"` as a legacy table and fails the build.
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
 
 [project]
-name = "slippage"
+# The distribution name is not the import name. `slippage` is taken on the index
+# by an unrelated project, so this publishes as `slippage-tca` — the suffix names
+# what the library is for — while `import slippage` is unchanged. Renaming the
+# Python package to match would have broken every existing import for the sake of
+# a registry collision.
+name = "slippage-tca"
 version = "0.1.0"
 description = "An optimal execution and transaction cost analysis engine"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+# The legacy `license = { text = "MIT" }` table this replaces put the word MIT in
+# the metadata and left the LICENSE file out of the distribution entirely.
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Daniyal" }]
 keywords = [
     "transaction-cost-analysis",
@@ -18,15 +28,20 @@ keywords = [
     "almgren-chriss",
     "quantitative-finance",
 ]
+# No `License ::` classifier: it is mutually exclusive with the SPDX expression
+# above, and supplying both is an error rather than a duplication.
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Financial and Insurance Industry",
-    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: Implementation :: CPython",
     "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering :: Mathematics",
     "Typing :: Typed",
 ]
 dependencies = ["numpy>=1.23"]
@@ -42,13 +57,19 @@ dev = [
 
 [project.scripts]
 slippage = "slippage.cli:main"
+# An alias under the distribution name, so that `uvx slippage-tca tca ...` works.
+# `uvx <name>` runs the console script whose name matches the distribution; with
+# only the short name, the incantation becomes `uvx --from slippage-tca slippage`,
+# which a reader cannot guess. Both names reach the same entry point.
+slippage-tca = "slippage.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/DaniyalMlk/slippage"
+Source = "https://github.com/DaniyalMlk/slippage"
 Issues = "https://github.com/DaniyalMlk/slippage/issues"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/slippage"]
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
