@@ -43,13 +43,48 @@ jobs:
           python-version: "3.12"
       - name: Build
         run: |
-          python -m pip install build
+          python -m pip install build twine
           python -m build
+      # The same reading of the metadata the index performs on upload. Failing
+      # it here is failing it in the only place a failure is still cheap: an
+      # index will not accept a replacement for a version already taken.
+      - name: Check the metadata the index will read
+        run: python -m twine check --strict dist/*
       - name: Install into a clean environment
         run: |
           python -m venv /tmp/clean
           /tmp/clean/bin/pip install dist/*.whl
           cd /tmp && /tmp/clean/bin/python -c "import slippage; print(slippage.__version__)"
+          /tmp/clean/bin/slippage --version
           /tmp/clean/bin/slippage sample-data --out /tmp/book
           /tmp/clean/bin/slippage tca --orders /tmp/book/orders.csv --fills /tmp/book/fills.csv --bars /tmp/book/bars.csv
           /tmp/clean/bin/slippage frontier --quantity 1e6 --horizon 5 --periods 5 --volatility 0.95 --gamma 2.5e-7 --eta 2.5e-6
+      # These assertions read License-Expression, License-File and the
+      # classifiers out of dist-info. In the test job that dist-info belongs to
+      # an editable install, written once and able to agree with a
+      # pyproject.toml that has since changed. Here it is the artefact that
+      # would actually be published.
+      - name: The metadata tests run against the installed wheel
+        run: |
+          /tmp/clean/bin/pip install pytest
+          /tmp/clean/bin/python -m pytest tests/test_metadata.py -q
+      # The sdist is built by a different code path from the wheel, and a file
+      # left out of one can be present in the other: py.typed and LICENSE both
+      # arrive by mechanisms that apply to only one of the two. The sdist is
+      # also what an index serves to anyone whose platform has no matching
+      # wheel.
+      - name: Install the sdist into a clean environment and run it
+        run: |
+          python -m venv /tmp/from-sdist
+          /tmp/from-sdist/bin/pip install dist/*.tar.gz
+          /tmp/from-sdist/bin/slippage --version
+          /tmp/from-sdist/bin/slippage sample-data --out /tmp/sdist-book
+          cd /tmp && /tmp/from-sdist/bin/slippage tca \
+            --orders /tmp/sdist-book/orders.csv \
+            --fills /tmp/sdist-book/fills.csv \
+            --bars /tmp/sdist-book/bars.csv --json > /dev/null
+          /tmp/from-sdist/bin/python -c "
+          import slippage, pathlib
+          assert (pathlib.Path(slippage.__file__).parent / 'py.typed').is_file()
+          print('py.typed present in the sdist install')
+          "
