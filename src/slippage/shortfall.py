@@ -58,6 +58,7 @@ __all__ = [
     "implementation_shortfall",
     "participation_rate",
     "shortfall_from_market",
+    "shortfall_from_totals",
 ]
 
 # Relative tolerance for the internal check that the components sum to the
@@ -66,6 +67,11 @@ __all__ = [
 # relative to the size of the *terms*, not of the result: when the components
 # nearly cancel, the total can be far smaller than the rounding error in each.
 _SUM_RTOL = 1e-12
+
+# Relative slack on the fills-against-target comparison. A tape summed in
+# floating point can exceed its own target by an ulp or two without anybody
+# having overfilled anything, and refusing that would be refusing correct data.
+_FILL_RTOL = 1e-12
 
 
 class DelayBasis(Enum):
@@ -155,6 +161,146 @@ def _check_price(name: str, value: float) -> float:
     return float(value)
 
 
+def _check_quantity(name: str, value: float, *, positive: bool = False) -> float:
+    """A quantity that is finite, unsigned, and optionally not zero.
+
+    Quantities are unsigned everywhere in this library; the side carries the
+    sign. A negative one here would flip a component silently rather than fail.
+    """
+    if not math.isfinite(value) or value < 0.0:
+        raise ValidationError(f"{name} must be a non-negative finite number, got {value!r}")
+    if positive and value == 0.0:
+        raise ValidationError(f"{name} must be positive, got {value!r}")
+    return float(value)
+
+
+def shortfall_from_totals(
+    *,
+    side: Side,
+    quantity: float,
+    filled_quantity: float,
+    executed_notional: float,
+    decision_price: float,
+    arrival_price: float,
+    final_price: float,
+    commission: float = 0.0,
+    fees: float = 0.0,
+    half_spread: float | None = None,
+    delay_basis: DelayBasis = DelayBasis.ORDER,
+) -> ShortfallBreakdown:
+    """Decompose a shortfall from order totals rather than from a fill tape.
+
+    This is the whole arithmetic of the decomposition, and it is deliberately
+    the version that takes the least. The Perold identity reads the side, the
+    two quantities, what the executed shares cost in total, three prices and the
+    explicit costs; it does not read *when* anything happened. Fills at
+    one-minute and at six-hour spacings give an identical breakdown to every
+    digit, so requiring timestamps to get one asks a caller to invent data the
+    answer does not depend on.
+
+    Two callers have only totals. A broker's TCA extract gives side, quantity,
+    filled quantity and an average price, with no individual fills to hang a
+    time on. And anything reconstructing an order from a wire format has to
+    fabricate timestamps to satisfy :class:`~slippage.types.Order` — which is
+    worse than merely inconvenient, because the fabricated values look like data
+    to everything downstream.
+
+    :func:`implementation_shortfall` is a thin wrapper over this for the case
+    where the fills *are* in hand, so the identity lives in one place and the
+    two cannot disagree.
+
+    Parameters
+    ----------
+    side
+        Direction of the parent order. Every component changes sign with it.
+    quantity
+        Target size, unsigned.
+    filled_quantity
+        How much of it executed, unsigned. The remainder is charged as
+        opportunity cost. It may not exceed ``quantity``.
+    executed_notional
+        Total cash value of the fills, ``sum(q_i * p_i)``, unsigned. Given as a
+        total rather than as an average price because an average would have to
+        be reconstructed into one anyway, and a weighted average supplied by
+        hand is a common place for a rounding error to enter.
+    decision_price, arrival_price, final_price
+        The three prices the decomposition is measured between.
+    commission
+        Commission on the executed shares, in currency.
+    fees
+        Explicit costs beyond commission (exchange, clearing, taxes).
+    half_spread
+        Half the quoted spread at arrival, in price units. When given, trading
+        cost is split into ``spread`` and ``impact``.
+    delay_basis
+        Which shares delay is charged on; see the module docstring.
+    """
+    p_d = _check_price("decision_price", decision_price)
+    p_0 = _check_price("arrival_price", arrival_price)
+    p_n = _check_price("final_price", final_price)
+    x = _check_quantity("quantity", quantity, positive=True)
+    q = _check_quantity("filled_quantity", filled_quantity)
+    notional = _check_quantity("executed_notional", executed_notional)
+    if not math.isfinite(commission) or commission < 0.0:
+        raise ValidationError(f"commission must be non-negative, got {commission!r}")
+    if not math.isfinite(fees) or fees < 0.0:
+        raise ValidationError(f"fees must be non-negative, got {fees!r}")
+    if half_spread is not None and (not math.isfinite(half_spread) or half_spread < 0.0):
+        raise ValidationError(f"half_spread must be non-negative, got {half_spread!r}")
+    if q > x * (1.0 + _FILL_RTOL):
+        raise ValidationError(
+            f"filled_quantity {q!r} exceeds quantity {x!r}: an order cannot be overfilled, "
+            "and taken at face value this gives a negative unfilled quantity and an "
+            "opportunity cost with the wrong sign"
+        )
+    q = min(q, x)
+
+    s = side.sign
+    unfilled = x - q
+
+    trading = s * (notional - q * p_0)
+    if delay_basis is DelayBasis.ORDER:
+        delay = s * x * (p_0 - p_d)
+        opportunity = s * unfilled * (p_n - p_0)
+    else:
+        delay = s * q * (p_0 - p_d)
+        opportunity = s * unfilled * (p_n - p_d)
+
+    spread: float | None = None
+    impact: float | None = None
+    if half_spread is not None:
+        spread = q * half_spread
+        impact = trading - spread
+
+    breakdown = ShortfallBreakdown(
+        side=side,
+        target_quantity=x,
+        filled_quantity=q,
+        decision_price=p_d,
+        arrival_price=p_0,
+        final_price=p_n,
+        average_price=notional / q if q > 0.0 else None,
+        delay=delay,
+        trading=trading,
+        opportunity=opportunity,
+        commission=float(commission),
+        fees=float(fees),
+        spread=spread,
+        impact=impact,
+        delay_basis=delay_basis,
+    )
+
+    # The direct Perold formula, computed independently of the split.
+    direct = s * (notional - q * p_d) + s * unfilled * (p_n - p_d) + commission + fees
+    scale = x * max(p_d, p_0, p_n) + notional + commission + fees
+    if abs(breakdown.total - direct) > _SUM_RTOL * scale:
+        raise SlippageError(
+            f"shortfall components sum to {breakdown.total!r} but the direct formula "
+            f"gives {direct!r}; this is a bug"
+        )
+    return breakdown
+
+
 def implementation_shortfall(
     order: Order,
     *,
@@ -167,10 +313,19 @@ def implementation_shortfall(
 ) -> ShortfallBreakdown:
     """Decompose the implementation shortfall of ``order``.
 
+    A thin wrapper over :func:`shortfall_from_totals`, which holds the
+    arithmetic. This one exists because an :class:`~slippage.types.Order` is
+    what the rest of the library passes around, and totalling its fills at every
+    call site would be repetitive and easy to get subtly wrong.
+
     Parameters
     ----------
     order
-        The parent order and its fills.
+        The parent order and its fills. Only the side, the quantities, the fill
+        prices and the commissions are read: the timestamps on the order and on
+        its fills play no part in the decomposition. If you have totals rather
+        than fills, call :func:`shortfall_from_totals` directly rather than
+        inventing times to build an order out of.
     arrival_price
         Price when the order reached the market.
     final_price
@@ -193,61 +348,20 @@ def implementation_shortfall(
         raise ValidationError(
             "a decision price is required: set Order.decision_price or pass decision_price"
         )
-    p_d = _check_price("decision_price", decision_price)
-    p_0 = _check_price("arrival_price", arrival_price)
-    p_n = _check_price("final_price", final_price)
-    if not math.isfinite(fees) or fees < 0.0:
-        raise ValidationError(f"fees must be non-negative, got {fees!r}")
-    if half_spread is not None and (not math.isfinite(half_spread) or half_spread < 0.0):
-        raise ValidationError(f"half_spread must be non-negative, got {half_spread!r}")
 
-    s = order.side.sign
-    x = order.quantity
-    q = order.filled_quantity
-    unfilled = order.unfilled_quantity
-    notional = sum(f.notional for f in order.fills)
-
-    trading = s * (notional - q * p_0)
-    if delay_basis is DelayBasis.ORDER:
-        delay = s * x * (p_0 - p_d)
-        opportunity = s * unfilled * (p_n - p_0)
-    else:
-        delay = s * q * (p_0 - p_d)
-        opportunity = s * unfilled * (p_n - p_d)
-
-    spread: float | None = None
-    impact: float | None = None
-    if half_spread is not None:
-        spread = q * half_spread
-        impact = trading - spread
-
-    breakdown = ShortfallBreakdown(
+    return shortfall_from_totals(
         side=order.side,
-        target_quantity=x,
-        filled_quantity=q,
-        decision_price=p_d,
-        arrival_price=p_0,
-        final_price=p_n,
-        average_price=order.average_price if order.fills else None,
-        delay=delay,
-        trading=trading,
-        opportunity=opportunity,
+        quantity=order.quantity,
+        filled_quantity=order.filled_quantity,
+        executed_notional=sum(f.notional for f in order.fills),
+        decision_price=decision_price,
+        arrival_price=arrival_price,
+        final_price=final_price,
         commission=order.total_commission,
-        fees=float(fees),
-        spread=spread,
-        impact=impact,
+        fees=fees,
+        half_spread=half_spread,
         delay_basis=delay_basis,
     )
-
-    # The direct Perold formula, computed independently of the split.
-    direct = s * (notional - q * p_d) + s * unfilled * (p_n - p_d) + order.total_commission + fees
-    scale = x * max(p_d, p_0, p_n) + notional + order.total_commission + fees
-    if abs(breakdown.total - direct) > _SUM_RTOL * scale:
-        raise SlippageError(
-            f"shortfall components sum to {breakdown.total!r} but the direct formula "
-            f"gives {direct!r}; this is a bug"
-        )
-    return breakdown
 
 
 def shortfall_from_market(
