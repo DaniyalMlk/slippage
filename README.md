@@ -21,6 +21,23 @@ See [ROADMAP.md](ROADMAP.md) for the build order.
 ## Install
 
 ```bash
+pip install slippage-tca
+slippage sample-data --out book
+slippage tca --orders book/orders.csv --fills book/fills.csv --bars book/bars.csv
+```
+
+**The distribution is `slippage-tca`; the import is `slippage`.** `pip install
+slippage` fetches an unrelated project that was on the index first. The Python
+package keeps the short name because renaming it would have broken every
+existing import to settle a registry collision, so:
+
+```python
+import slippage  # installed from slippage-tca
+```
+
+To work on the library instead:
+
+```bash
 pip install -e ".[dev]"
 python -m pytest
 ```
