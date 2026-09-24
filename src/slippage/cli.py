@@ -30,6 +30,7 @@ from typing import TextIO
 
 import numpy as np
 
+from . import __version__
 from .exceptions import SlippageError
 from .execution import ExecutionProblem, efficient_frontier, optimal_trajectory
 from .impact import ImpactModel, LinearImpact, PowerLawImpact
@@ -75,6 +76,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="slippage", description="Transaction cost analysis and optimal execution."
     )
+    # The version is read from the package rather than from installed metadata,
+    # so that the answer is the same whether the copy in reach was installed
+    # from a wheel, from an sdist, editable, or not installed at all.
+    parser.add_argument("--version", action="version", version=f"slippage {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     tca = sub.add_parser("tca", help="implementation shortfall report over a book of orders")

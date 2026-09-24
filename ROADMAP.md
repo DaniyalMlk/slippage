@@ -59,3 +59,12 @@ untestable.
 - [x] Command line interface over the whole pipeline
 - [x] End-to-end worked example from raw fills to a scheduling recommendation
 - [x] README covering usage, conventions and the design decisions that mattered
+
+## Phase 8 — Installable from a package index
+
+- [x] Distribution name distinct from the taken one, import name unchanged
+- [x] SPDX licence expression, with the licence file inside both artefacts
+- [x] `--version` on the command line, agreeing with the packaged metadata
+- [x] Metadata tests: version agreement, typing marker, entry points, licence
+- [x] Tag-driven release with a version guard and no stored credential
+- [ ] First release on the index
