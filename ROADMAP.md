@@ -68,3 +68,10 @@ untestable.
 - [x] Metadata tests: version agreement, typing marker, entry points, licence
 - [x] Tag-driven release with a version guard and no stored credential
 - [ ] First release on the index
+
+## Phase 9 — Decomposition without a tape
+
+- [x] Shortfall from order totals, with the identity and its cross-check there
+- [x] `implementation_shortfall` reduced to a wrapper over it
+- [x] Property test driving both routes over randomly generated orders
+- [x] The timestamp-independence the totals path relies on, asserted not assumed

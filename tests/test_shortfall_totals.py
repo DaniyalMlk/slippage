@@ -315,3 +315,32 @@ def test_the_delay_basis_still_reattributes_without_changing_the_total() -> None
 
     assert on_order.delay != pytest.approx(on_executed.delay)
     assert on_order.total == pytest.approx(on_executed.total, rel=1e-12)
+
+
+def test_the_readme_example_reproduces_its_published_figures() -> None:
+    """The snippet in the README, against the table printed above it.
+
+    The README shows a worked order decomposing to 1,000 of delay, 1,100 of
+    trading, 1,200 of opportunity and 67.50 basis points in total, and then
+    shows this call. If the two ever disagreed, a reader copying the snippet
+    would get different numbers from the ones on the same page — which is worse
+    than an undocumented function, because it reads as authoritative.
+    """
+    breakdown = shortfall_from_totals(
+        side=Side.BUY,
+        quantity=10_000,
+        filled_quantity=7_000,
+        executed_notional=7_000 * 50.2571428,
+        decision_price=50.00,
+        arrival_price=50.10,
+        final_price=50.50,
+        commission=70.0,
+        fees=5.0,
+    )
+    assert breakdown.delay == pytest.approx(1_000.00, abs=0.005)
+    assert breakdown.trading == pytest.approx(1_100.00, abs=0.005)
+    assert breakdown.opportunity == pytest.approx(1_200.00, abs=0.005)
+    assert breakdown.commission == pytest.approx(70.00)
+    assert breakdown.fees == pytest.approx(5.00)
+    assert breakdown.total == pytest.approx(3_375.00, abs=0.005)
+    assert breakdown.total_bps == pytest.approx(67.50, abs=0.005)

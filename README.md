@@ -183,6 +183,43 @@ basis charges delay on the whole target, since all of it sat idle; the
 *executed* basis charges it only on shares that traded. Both split the same
 total, which the test suite checks on randomly generated orders.
 
+### Two ways in, and which to use
+
+`implementation_shortfall` takes an `Order`, which carries fills and the times
+they happened. Reach for it when you have a tape.
+
+`shortfall_from_totals` takes the numbers the arithmetic actually uses — side,
+target quantity, filled quantity, executed notional, three prices and the
+explicit costs — and nothing else:
+
+```python
+from slippage import DelayBasis, Side, shortfall_from_totals
+
+breakdown = shortfall_from_totals(
+    side=Side.BUY,
+    quantity=10_000,
+    filled_quantity=7_000,
+    executed_notional=7_000 * 50.2571428,
+    decision_price=50.00,
+    arrival_price=50.10,
+    final_price=50.50,
+    commission=70.0,
+    fees=5.0,
+)
+```
+
+Reach for it when you have totals rather than fills — a broker's TCA extract,
+or anything reconstructing an order from a wire format. The decomposition never
+reads a timestamp: the same fills spaced a minute apart and six hours apart give
+identical breakdowns to every digit, which the test suite asserts rather than
+assumes. Building an `Order` for it would mean inventing times the answer does
+not depend on, and invented values look like data to everything downstream.
+
+`implementation_shortfall` is a thin wrapper over `shortfall_from_totals`, so
+there is one implementation of the identity and one place the Perold
+cross-check lives. A property test drives both over randomly generated orders
+and compares them field for field.
+
 ## Reporting across a book
 
 `build_report` decomposes every order and aggregates by any key. Every
