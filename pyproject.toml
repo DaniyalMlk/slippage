@@ -83,6 +83,14 @@ files = ["src/slippage", "tests", "examples"]
 module = ["scipy.*"]
 ignore_missing_imports = true
 
+# `tomllib` entered the standard library in 3.11, and mypy resolves imports
+# against the interpreter it is run under. CI runs it under 3.10 as well, where
+# the metadata tests' guarded `import tomllib` — behind a skipif on the same
+# version — is the only thing in the tree that mentions it.
+[[tool.mypy.overrides]]
+module = ["tomllib"]
+ignore_missing_imports = true
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
