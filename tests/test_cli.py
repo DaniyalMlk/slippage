@@ -150,3 +150,172 @@ class TestFrontier:
     def test_bad_number_list_is_an_argument_error(self) -> None:
         with pytest.raises(SystemExit):
             run("frontier", *AC_ARGS, "--risk-aversions", "1e-6,lots")
+
+
+@pytest.fixture(scope="module")
+def decaying(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A book whose prints carry decaying impact, plus the index it moved with.
+
+    ``sample-data`` writes the other generator, whose bars are the unaffected
+    market — correct for calibrating against an arrival benchmark and empty of
+    anything a mark-out could read.
+    """
+    import numpy as np
+
+    from slippage.io import write_bars, write_orders
+    from slippage.synthetic import decaying_book
+
+    folder = tmp_path_factory.mktemp("marks")
+    book = decaying_book(np.random.default_rng(7), orders=60)
+    write_orders(book.orders, folder / "orders.csv", folder / "fills.csv")
+    write_bars(book.bars, folder / "bars.csv")
+    write_bars({"INDEX": book.index}, folder / "index.csv")
+    return folder
+
+
+def markout_args(folder: Path) -> list[str]:
+    return [
+        "markouts",
+        "--orders", str(folder / "orders.csv"),
+        "--fills", str(folder / "fills.csv"),
+        "--bars", str(folder / "bars.csv"),
+    ]  # fmt: skip
+
+
+class TestMarkOuts:
+    def test_text_report(self, decaying: Path) -> None:
+        code, text = run(*markout_args(decaying))
+        assert code == 0
+        assert "Mark-outs over 60 orders" in text
+        assert "persisted" in text
+        assert "reverted" in text
+        assert "half-life" in text
+
+    def test_an_unadjusted_report_says_so_twice(self, decaying: Path) -> None:
+        """In the header and again at the end, because it is the one thing that
+        decides whether any of the numbers mean anything."""
+        code, text = run(*markout_args(decaying))
+        assert code == 0
+        assert "NOT market-adjusted" in text
+        assert "No benchmark was given" in text
+
+    def test_the_benchmark_sharpens_every_figure(self, decaying: Path) -> None:
+        plain = json.loads(run(*markout_args(decaying), "--json")[1])
+        adjusted = json.loads(
+            run(
+                *markout_args(decaying),
+                "--benchmark",
+                str(decaying / "index.csv"),
+                "--json",
+            )[1]
+        )
+        assert adjusted["benchmark_adjusted"] is True
+        assert adjusted["beta"] == 1.0
+        assert plain["beta"] is None
+        assert adjusted["impact_standard_error"] < 0.25 * plain["impact_standard_error"]
+        for near, far in zip(plain["horizons"], adjusted["horizons"], strict=True):
+            assert far["standard_error"] < near["standard_error"]
+        # The truth in the generator is 10.0 basis points of impact at completion,
+        # 4.0 of it permanent, decaying with a 208-second half-life.
+        assert adjusted["mean_impact_bps"] == pytest.approx(10.0, abs=1.0)
+        assert adjusted["decay"]["asymptote_bps"] == pytest.approx(4.0, abs=1.0)
+        assert not text_contains_nan(json.dumps(adjusted))
+
+    def test_the_payload_is_json_a_strict_parser_accepts(self, decaying: Path) -> None:
+        """Horizons past the end of the bars carry no mean, and a NaN there is not
+        JSON: ``json.dumps`` writes it bare and ``json.loads`` reads it back, so a
+        round trip does not catch it. Those fields are null."""
+        code, text = run(
+            *markout_args(decaying), "--horizons", "1,5,600", "--json"
+        )
+        assert code == 0
+        payload = json.loads(text)
+        assert json.dumps(payload, allow_nan=False)
+        unreachable = payload["horizons"][-1]
+        assert unreachable["orders"] == 0
+        assert unreachable["mean_permanent_bps"] is None
+        assert unreachable["standard_error"] is None
+
+    def test_a_beta_is_applied_and_reported(self, decaying: Path) -> None:
+        half = json.loads(
+            run(
+                *markout_args(decaying),
+                "--benchmark",
+                str(decaying / "index.csv"),
+                "--beta",
+                "0.5",
+                "--json",
+            )[1]
+        )
+        full = json.loads(
+            run(
+                *markout_args(decaying),
+                "--benchmark",
+                str(decaying / "index.csv"),
+                "--json",
+            )[1]
+        )
+        assert half["beta"] == 0.5
+        # The generator moves every symbol one for one with the index, so half the
+        # adjustment leaves half the market in and the estimate loses precision.
+        assert half["impact_standard_error"] > full["impact_standard_error"]
+
+    def test_a_negative_horizon_is_refused_by_the_parser(self, decaying: Path) -> None:
+        with pytest.raises(SystemExit):
+            run(*markout_args(decaying), "--horizons", "5,-10")
+
+    def test_a_benchmark_file_with_several_symbols_asks_which(
+        self, decaying: Path
+    ) -> None:
+        code, _ = run(
+            *markout_args(decaying), "--benchmark", str(decaying / "bars.csv")
+        )
+        assert code == 2
+        code, _ = run(
+            *markout_args(decaying),
+            "--benchmark",
+            str(decaying / "bars.csv"),
+            "--benchmark-symbol",
+            "SYM0000",
+        )
+        assert code == 0
+        code, _ = run(
+            *markout_args(decaying),
+            "--benchmark",
+            str(decaying / "index.csv"),
+            "--benchmark-symbol",
+            "NOPE",
+        )
+        assert code == 2
+
+    def test_a_curve_with_no_decay_reports_why_rather_than_a_half_life(
+        self, tmp_path: Path
+    ) -> None:
+        import numpy as np
+
+        from slippage.io import write_bars, write_orders
+        from slippage.synthetic import decaying_book
+
+        book = decaying_book(
+            np.random.default_rng(2),
+            orders=20,
+            permanent_bps=10.0,
+            temporary_bps=-6.0,
+            market_volatility_bps=0.0,
+            idiosyncratic_volatility_bps=0.0,
+        )
+        write_orders(book.orders, tmp_path / "o.csv", tmp_path / "f.csv")
+        write_bars(book.bars, tmp_path / "b.csv")
+        code, text = run(
+            "markouts",
+            "--orders", str(tmp_path / "o.csv"),
+            "--fills", str(tmp_path / "f.csv"),
+            "--bars", str(tmp_path / "b.csv"),
+        )  # fmt: skip
+        assert code == 0
+        assert "no half-life" in text
+        assert "does not decay" in text
+
+
+def text_contains_nan(text: str) -> bool:
+    return "NaN" in text or "Infinity" in text

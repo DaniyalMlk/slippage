@@ -357,15 +357,20 @@ class DecayProfile:
 
     @property
     def reverted_fraction(self) -> float | None:
-        """The fraction that came back by the longest horizon measured.
+        """The fraction that came back by the longest horizon *with observations*.
 
-        The headline number, and the one that is least defensible on a short
-        sample: it is a ratio of two noisy means and the denominator is the
-        smaller of the two.
+        The longest horizon asked for is often past the end of the bars, where
+        there is no mean to take a fraction of — so this walks back to the last
+        one that had orders in it rather than returning a NaN that would survive
+        a JSON round trip and fail a strict parser at the far end.
+
+        The headline number, and the one least defensible on a short sample: it is
+        a ratio of two noisy means and the denominator is the smaller of the two.
         """
-        if not self.points:
-            return None
-        return self.points[-1].reverted_fraction(self.mean_impact_bps)
+        for point in reversed(self.points):
+            if point.orders > 0:
+                return point.reverted_fraction(self.mean_impact_bps)
+        return None
 
     def decay(self) -> Decay:
         """Fit ``permanent(h) = a + b exp(-h / tau)`` to the curve.

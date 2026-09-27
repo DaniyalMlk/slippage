@@ -521,3 +521,23 @@ def test_the_realised_cost_is_reported_adjusted_and_not() -> None:
     adjusted = price_reversion(order, book.bars[order.symbol], benchmark=book.index)
     assert adjusted.realised_bps == pytest.approx(plain.realised_bps)
     assert adjusted.adjusted_realised_bps != pytest.approx(adjusted.realised_bps)
+
+
+def test_the_headline_fraction_walks_back_past_horizons_with_no_data() -> None:
+    """A NaN here survives a JSON round trip and fails a strict parser downstream.
+
+    The longest horizon asked for is routinely past the end of the bars, where
+    there is no mean to take a fraction of. Returning NaN would be read back by
+    ``json.loads`` without complaint and rejected by anything stricter, so the
+    fraction comes from the last horizon that had orders in it.
+    """
+    book = decaying_book(np.random.default_rng(21), orders=6)
+    horizons = (*DEFAULT_HORIZONS, timedelta(hours=9))
+    profile = reversion_profile(list(book.orders.values()), book.bars, horizons=horizons)
+    assert profile.points[-1].orders == 0
+    fraction = profile.reverted_fraction
+    assert fraction is not None
+    assert not math.isnan(fraction)
+    assert fraction == pytest.approx(
+        profile.at(timedelta(minutes=60)).reverted_fraction(profile.mean_impact_bps)
+    )
