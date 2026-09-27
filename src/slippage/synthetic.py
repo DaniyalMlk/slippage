@@ -273,9 +273,7 @@ def decaying_book(
             )
             price = base * (1.0 + (impact + beta * factor[i] + noise[i]) / 1e4)
             prices.append(price)
-            series_bars.append(
-                Bar(moment, price, price * 1.002, price * 0.998, price, 20_000.0)
-            )
+            series_bars.append(Bar(moment, price, price * 1.002, price * 0.998, price, 20_000.0))
         bars[symbol] = BarSeries(series_bars)
         fills = tuple(
             Fill(

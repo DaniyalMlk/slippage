@@ -281,16 +281,21 @@ persisted and the part that reverted:
 from slippage import reversion_profile, permanent_moves_from_orders, fit_permanent
 
 profile = reversion_profile(orders, bars, benchmark=index)
-profile.mean_impact_bps              # 10.52 +/- 0.53
+profile.mean_impact_bps  # 10.52 +/- 0.53
 profile.at(timedelta(minutes=60)).mean_permanent_bps
-profile.reverted_fraction            # 0.67 of the impact came back
-profile.decay().half_life            # 279 seconds
-profile.decay().asymptote_bps        # 3.84 bps that did not
+profile.reverted_fraction  # 0.67 of the impact came back
+profile.decay().half_life  # 279 seconds
+profile.decay().asymptote_bps  # 3.84 bps that did not
 
 # and the pair fit_permanent always wanted and nothing produced
-fit_permanent(*permanent_moves_from_orders(
-    orders, bars, horizon=timedelta(minutes=45), benchmark=index,
-))
+fit_permanent(
+    *permanent_moves_from_orders(
+        orders,
+        bars,
+        horizon=timedelta(minutes=45),
+        benchmark=index,
+    )
+)
 ```
 
 That last call is the gap this closes. `fit_permanent` documents its second

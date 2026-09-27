@@ -242,8 +242,7 @@ def _run_markouts(args: argparse.Namespace, out: TextIO) -> None:
             benchmark = next(iter(series.values()))
         else:
             raise ValidationError(
-                f"{args.benchmark} holds {len(series)} symbols; name one with "
-                "--benchmark-symbol"
+                f"{args.benchmark} holds {len(series)} symbols; name one with --benchmark-symbol"
             )
     profile = reversion_profile(
         orders.values(),
@@ -264,9 +263,7 @@ def _run_markouts(args: argparse.Namespace, out: TextIO) -> None:
             {
                 "minutes": point.horizon.total_seconds() / 60.0,
                 "orders": point.orders,
-                "mean_permanent_bps": point.mean_permanent_bps
-                if point.orders
-                else None,
+                "mean_permanent_bps": point.mean_permanent_bps if point.orders else None,
                 "standard_error": point.standard_error if point.orders else None,
                 "mean_reverted_bps": point.mean_reverted_bps if point.orders else None,
                 "reverted_fraction": point.reverted_fraction(profile.mean_impact_bps)
@@ -320,8 +317,7 @@ def _run_markouts(args: argparse.Namespace, out: TextIO) -> None:
     for point in profile.points:
         if not point.orders:
             print(
-                f"  {point.horizon.total_seconds() / 60.0:7.0f}m  {0:6d}  "
-                f"{'no data':>12}",
+                f"  {point.horizon.total_seconds() / 60.0:7.0f}m  {0:6d}  {'no data':>12}",
                 file=out,
             )
             continue

@@ -64,9 +64,7 @@ def quiet_book(
     )
 
 
-def flat_series(
-    *, minutes: int = 120, price: float = 100.0, start: datetime = OPEN
-) -> BarSeries:
+def flat_series(*, minutes: int = 120, price: float = 100.0, start: datetime = OPEN) -> BarSeries:
     return BarSeries(
         [
             Bar(start + i * MINUTE, price, price * 1.001, price * 0.999, price, 5_000.0)
@@ -113,13 +111,10 @@ def test_the_persisted_move_is_the_impact_the_generator_put_there() -> None:
         )
         for mark in profile.marks:
             expected = book.permanent_bps + book.temporary_bps * 2.0 ** (
-                -mark.horizon.total_seconds()
-                / book.half_life.total_seconds()
+                -mark.horizon.total_seconds() / book.half_life.total_seconds()
             )
             assert mark.permanent_bps == pytest.approx(expected, abs=1e-9)
-            assert mark.reverted_bps == pytest.approx(
-                profile.impact_bps - expected, abs=1e-9
-            )
+            assert mark.reverted_bps == pytest.approx(profile.impact_bps - expected, abs=1e-9)
 
 
 def test_the_decomposition_adds_up_at_every_horizon() -> None:
@@ -132,9 +127,7 @@ def test_the_decomposition_adds_up_at_every_horizon() -> None:
     book = decaying_book(np.random.default_rng(11), orders=6)
     for order in book.orders.values():
         for benchmark in (None, book.index):
-            profile = price_reversion(
-                order, book.bars[order.symbol], benchmark=benchmark
-            )
+            profile = price_reversion(order, book.bars[order.symbol], benchmark=benchmark)
             for mark in profile.marks:
                 assert mark.permanent_bps + mark.reverted_bps == pytest.approx(
                     profile.impact_bps, abs=1e-12
@@ -218,9 +211,7 @@ def test_a_pure_market_move_is_removed_and_shows_up_without_the_benchmark() -> N
         market_volatility_bps=4.0,
     )
     unadjusted = reversion_profile(list(book.orders.values()), book.bars)
-    adjusted = reversion_profile(
-        list(book.orders.values()), book.bars, benchmark=book.index
-    )
+    adjusted = reversion_profile(list(book.orders.values()), book.bars, benchmark=book.index)
     assert adjusted.benchmark_adjusted
     assert not unadjusted.benchmark_adjusted
     for point in adjusted.points:
@@ -367,9 +358,7 @@ def test_the_fitted_half_life_recovers_a_noiseless_decay() -> None:
     book = quiet_book(orders=6)
     profile = reversion_profile(list(book.orders.values()), book.bars)
     decay = profile.decay()
-    assert decay.half_life.total_seconds() == pytest.approx(
-        book.half_life.total_seconds(), abs=1.0
-    )
+    assert decay.half_life.total_seconds() == pytest.approx(book.half_life.total_seconds(), abs=1.0)
     assert decay.asymptote_bps == pytest.approx(book.permanent_bps, abs=1e-3)
     assert decay.amplitude_bps == pytest.approx(book.temporary_bps, abs=1e-3)
     assert decay.r_squared > 0.9999
@@ -405,9 +394,7 @@ def test_three_horizons_are_needed_for_three_parameters() -> None:
 
 def test_the_permanent_fraction_is_withheld_on_a_negligible_total() -> None:
     book = quiet_book(orders=4, permanent_bps=0.1, temporary_bps=0.2)
-    decay = reversion_profile(
-        list(book.orders.values()), book.bars
-    ).decay()
+    decay = reversion_profile(list(book.orders.values()), book.bars).decay()
     assert decay.permanent_fraction is None
 
 
@@ -458,9 +445,7 @@ def test_the_moves_are_signed_as_a_cost_and_the_quantities_are_not() -> None:
     assert all(quantity > 0.0 for quantity in quantities)
     assert all(move > 0.0 for move in moves)
     order = next(iter(book.orders.values()))
-    profile = price_reversion(
-        order, book.bars[order.symbol], horizons=(timedelta(minutes=45),)
-    )
+    profile = price_reversion(order, book.bars[order.symbol], horizons=(timedelta(minutes=45),))
     assert profile.permanent_per_share(timedelta(minutes=45)) == pytest.approx(
         profile.at(timedelta(minutes=45)).permanent_bps / 1e4 * profile.arrival_price
     )
@@ -470,9 +455,7 @@ def test_orders_whose_mark_out_falls_off_the_end_are_left_out() -> None:
     """Rather than contributing a zero move standing in for no measurement."""
     book = decaying_book(np.random.default_rng(13), orders=6)
     with pytest.raises(InsufficientDataError, match="bars end too soon"):
-        permanent_moves_from_orders(
-            book.orders.values(), book.bars, horizon=timedelta(hours=9)
-        )
+        permanent_moves_from_orders(book.orders.values(), book.bars, horizon=timedelta(hours=9))
 
 
 # -- refusals -----------------------------------------------------------------

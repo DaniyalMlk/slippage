@@ -46,9 +46,7 @@ TRUE_HALF_LIFE = timedelta(seconds=208)
 
 
 def true_reverted_fraction() -> float:
-    decayed = 1.0 - float(
-        2.0 ** (-HOUR.total_seconds() / TRUE_HALF_LIFE.total_seconds())
-    )
+    decayed = 1.0 - float(2.0 ** (-HOUR.total_seconds() / TRUE_HALF_LIFE.total_seconds()))
     return TRUE_TEMPORARY * decayed / (TRUE_PERMANENT + TRUE_TEMPORARY)
 
 

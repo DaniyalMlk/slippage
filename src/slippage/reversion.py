@@ -214,9 +214,7 @@ def price_reversion(
         if horizon <= timedelta(0):
             raise ValidationError(f"a mark-out horizon is positive, got {horizon!r}")
     if benchmark is None and beta != 1.0:
-        raise ValidationError(
-            f"a beta of {beta!r} was given with no benchmark to apply it to"
-        )
+        raise ValidationError(f"a beta of {beta!r} was given with no benchmark to apply it to")
     last = order.last_fill_time
     assert last is not None  # guaranteed by the fills check above
     completion = series.end_of_bar_containing(last)
@@ -237,9 +235,7 @@ def price_reversion(
     realised = sign * (order.average_price / arrival_price - 1.0)
     adjusted_realised = realised
     if benchmark is not None:
-        adjusted_realised -= sign * beta * _return(
-            benchmark, order.arrival_time, completion
-        )
+        adjusted_realised -= sign * beta * _return(benchmark, order.arrival_time, completion)
 
     marks: list[MarkOut] = []
     for horizon in sorted(set(horizons)):
@@ -403,9 +399,7 @@ class DecayProfile:
             count = len(times)
             mean_basis = math.fsum(basis) / count
             mean_value = math.fsum(values) / count
-            centred = math.fsum(
-                (one - mean_basis) ** 2 for one in basis
-            )
+            centred = math.fsum((one - mean_basis) ** 2 for one in basis)
             if centred <= 0.0:
                 return mean_value, 0.0, math.inf
             slope = (
@@ -484,30 +478,18 @@ def reversion_profile(
             raise ValidationError(
                 f"no bars for {order.symbol!r}; a mark-out needs the symbol's own series"
             ) from None
-        against = (
-            benchmark[order.symbol]
-            if isinstance(benchmark, Mapping)
-            else benchmark
-        )
+        against = benchmark[order.symbol] if isinstance(benchmark, Mapping) else benchmark
         profiles.append(
-            price_reversion(
-                order, bars, horizons=horizons, benchmark=against, beta=beta
-            )
+            price_reversion(order, bars, horizons=horizons, benchmark=against, beta=beta)
         )
     if not profiles:
         raise InsufficientDataError("no orders with fills to mark out")
 
-    impact_mean, impact_error = _mean_and_error(
-        [one.impact_bps for one in profiles]
-    )
+    impact_mean, impact_error = _mean_and_error([one.impact_bps for one in profiles])
     realised_mean = math.fsum(one.realised_bps for one in profiles) / len(profiles)
     points: list[DecayPoint] = []
     for horizon in sorted(set(horizons)):
-        permanents = [
-            one.at(horizon).permanent_bps
-            for one in profiles
-            if one.at(horizon).observed
-        ]
+        permanents = [one.at(horizon).permanent_bps for one in profiles if one.at(horizon).observed]
         if not permanents:
             points.append(
                 DecayPoint(
@@ -520,11 +502,7 @@ def reversion_profile(
                 )
             )
             continue
-        reverted = [
-            one.at(horizon).reverted_bps
-            for one in profiles
-            if one.at(horizon).observed
-        ]
+        reverted = [one.at(horizon).reverted_bps for one in profiles if one.at(horizon).observed]
         permanent_mean, permanent_error = _mean_and_error(permanents)
         reverted_mean, reverted_error = _mean_and_error(reverted)
         points.append(
@@ -583,12 +561,8 @@ def permanent_moves_from_orders(
             raise ValidationError(
                 f"no bars for {order.symbol!r}; a mark-out needs the symbol's own series"
             ) from None
-        against = (
-            benchmark[order.symbol] if isinstance(benchmark, Mapping) else benchmark
-        )
-        profile = price_reversion(
-            order, bars, horizons=(horizon,), benchmark=against, beta=beta
-        )
+        against = benchmark[order.symbol] if isinstance(benchmark, Mapping) else benchmark
+        profile = price_reversion(order, bars, horizons=(horizon,), benchmark=against, beta=beta)
         if not profile.at(horizon).observed:
             continue
         quantities.append(profile.quantity)

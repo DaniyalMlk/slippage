@@ -225,9 +225,7 @@ class TestMarkOuts:
         """Horizons past the end of the bars carry no mean, and a NaN there is not
         JSON: ``json.dumps`` writes it bare and ``json.loads`` reads it back, so a
         round trip does not catch it. Those fields are null."""
-        code, text = run(
-            *markout_args(decaying), "--horizons", "1,5,600", "--json"
-        )
+        code, text = run(*markout_args(decaying), "--horizons", "1,5,600", "--json")
         assert code == 0
         payload = json.loads(text)
         assert json.dumps(payload, allow_nan=False)
@@ -264,12 +262,8 @@ class TestMarkOuts:
         with pytest.raises(SystemExit):
             run(*markout_args(decaying), "--horizons", "5,-10")
 
-    def test_a_benchmark_file_with_several_symbols_asks_which(
-        self, decaying: Path
-    ) -> None:
-        code, _ = run(
-            *markout_args(decaying), "--benchmark", str(decaying / "bars.csv")
-        )
+    def test_a_benchmark_file_with_several_symbols_asks_which(self, decaying: Path) -> None:
+        code, _ = run(*markout_args(decaying), "--benchmark", str(decaying / "bars.csv"))
         assert code == 2
         code, _ = run(
             *markout_args(decaying),
