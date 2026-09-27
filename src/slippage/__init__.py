@@ -54,6 +54,18 @@ from .report import (
     compare_to_model,
     modified_z_scores,
 )
+from .reversion import (
+    DEFAULT_HORIZONS,
+    IMPACT_FLOOR_BPS,
+    Decay,
+    DecayPoint,
+    DecayProfile,
+    MarkOut,
+    Reversion,
+    permanent_moves_from_orders,
+    price_reversion,
+    reversion_profile,
+)
 from .scheduling import SchedulePlan, participation_caps, schedule_objective, solve_schedule
 from .series import BarSeries
 from .shortfall import (
@@ -67,7 +79,7 @@ from .shortfall import (
     shortfall_from_totals,
 )
 from .simulate import CostDistribution, simulate_costs, simulate_prices
-from .synthetic import SyntheticBook, synthetic_book
+from .synthetic import DecayingBook, SyntheticBook, decaying_book, synthetic_book
 from .types import Bar, Fill, Order, Side
 from .volume import (
     PovSchedule,
@@ -82,6 +94,8 @@ from .volume import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "DEFAULT_HORIZONS",
+    "IMPACT_FLOOR_BPS",
     "Aggregate",
     "Bar",
     "BarSeries",
@@ -89,6 +103,10 @@ __all__ = [
     "CalibrationError",
     "ConvergenceError",
     "CostDistribution",
+    "Decay",
+    "DecayPoint",
+    "DecayProfile",
+    "DecayingBook",
     "DelayBasis",
     "Estimate",
     "ExecutionProblem",
@@ -102,6 +120,7 @@ __all__ = [
     "InsufficientDataError",
     "LinearImpact",
     "LinearTemporaryFit",
+    "MarkOut",
     "ModelComparison",
     "NoVolumeError",
     "Order",
@@ -109,6 +128,7 @@ __all__ = [
     "PovSchedule",
     "PowerLawFit",
     "PowerLawImpact",
+    "Reversion",
     "ScheduleCost",
     "SchedulePlan",
     "Score",
@@ -130,6 +150,7 @@ __all__ = [
     "cost_bps",
     "cost_currency",
     "cost_per_share",
+    "decaying_book",
     "efficient_frontier",
     "estimate_profile",
     "fit_linear_temporary",
@@ -145,7 +166,10 @@ __all__ = [
     "order_window",
     "participation_caps",
     "participation_rate",
+    "permanent_moves_from_orders",
     "pov_schedule",
+    "price_reversion",
+    "reversion_profile",
     "round_to_lots",
     "samples_from_orders",
     "schedule_cost",

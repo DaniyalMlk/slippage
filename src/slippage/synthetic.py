@@ -20,10 +20,11 @@ from datetime import date, datetime, time, timedelta
 import numpy as np
 from numpy.typing import NDArray
 
+from .exceptions import ValidationError
 from .series import BarSeries
 from .types import Bar, Fill, Order, Side
 
-__all__ = ["SyntheticBook", "synthetic_book"]
+__all__ = ["DecayingBook", "SyntheticBook", "decaying_book", "synthetic_book"]
 
 SESSION_OPEN = time(9, 30)
 SESSION_MINUTES = 390
@@ -153,4 +154,149 @@ def synthetic_book(
         daily_volume=volumes,
         daily_volatility=vols,
         impact_y=impact_y,
+    )
+
+
+@dataclass(frozen=True)
+class DecayingBook:
+    """Orders whose impact is *in the prints*, with the decay it was built from.
+
+    :func:`synthetic_book` deliberately keeps impact out of the bars: its prints
+    are the unaffected market and the impact lives only in the fill prices. That
+    is the right shape for calibrating a cost model against an arrival benchmark
+    and it is useless for measuring a mark-out, because a mark-out reads the
+    impact off the prints. So this is a second generator rather than an option on
+    the first, and the difference between them is the assumption each one is
+    testing.
+    """
+
+    orders: dict[str, Order]
+    bars: dict[str, BarSeries]
+    #: One index series, moving with every symbol by its beta. Passing it to
+    #: :func:`~slippage.reversion.reversion_profile` is what the benchmark
+    #: adjustment is for.
+    index: BarSeries
+    #: Impact at completion that never comes back, in basis points.
+    permanent_bps: float
+    #: Impact at completion that decays, in basis points.
+    temporary_bps: float
+    #: Half-life of that decay.
+    half_life: timedelta
+    #: Beta of every symbol to :attr:`index`.
+    beta: float
+
+
+def _impact_bps(
+    moment: datetime,
+    start: datetime,
+    finish: datetime,
+    permanent: float,
+    temporary: float,
+    decay: float,
+) -> float:
+    """Impact in basis points at ``moment``, building then decaying.
+
+    Linear in the executed fraction while trading, because impact accumulates
+    with the quantity done rather than with the clock; exponential in the elapsed
+    time afterwards, because that is the shape a mark-out curve is fitted with
+    and a generator that built one shape to be measured by another would be
+    testing the fitter against itself.
+    """
+    if moment < start:
+        return 0.0
+    if moment <= finish:
+        return (permanent + temporary) * (moment - start) / (finish - start)
+    elapsed = (moment - finish).total_seconds()
+    return permanent + temporary * math.exp(-elapsed / decay)
+
+
+def decaying_book(
+    rng: np.random.Generator,
+    *,
+    orders: int = 120,
+    permanent_bps: float = 4.0,
+    temporary_bps: float = 6.0,
+    half_life: timedelta = timedelta(seconds=208),
+    market_volatility_bps: float = 3.0,
+    idiosyncratic_volatility_bps: float = 1.0,
+    beta: float = 1.0,
+    execution_minutes: int = 20,
+    day: date = date(2026, 3, 2),
+) -> DecayingBook:
+    """A book whose prints carry impact that decays to a known asymptote.
+
+    Every symbol's log price is a market factor times ``beta``, plus its own
+    noise, plus the order's own impact signed for the side. Sides alternate, so
+    an estimator that forgot to sign the move for the side returns zero on
+    average rather than something plausible.
+
+    ``market_volatility_bps`` and ``idiosyncratic_volatility_bps`` are per
+    minute. The defaults are the interesting case rather than a quiet one: over
+    the eighty minutes from arrival to the last mark-out the market factor
+    accumulates about 27 basis points against ten of impact, so the measurement
+    only works once the factor is removed.
+    """
+    if execution_minutes < 1:
+        raise ValidationError(f"execution_minutes must be positive, got {execution_minutes!r}")
+    if half_life <= timedelta(0):
+        raise ValidationError(f"half_life must be positive, got {half_life!r}")
+    decay = half_life.total_seconds() / math.log(2.0)
+    opening = datetime.combine(day, SESSION_OPEN)
+    minute = timedelta(minutes=1)
+    factor = np.cumsum(rng.normal(0.0, market_volatility_bps, SESSION_MINUTES))
+
+    index_bars = []
+    for i in range(SESSION_MINUTES):
+        price = 1000.0 * (1.0 + factor[i] / 1e4)
+        index_bars.append(
+            Bar(opening + i * minute, price, price * 1.002, price * 0.998, price, 1e7)
+        )
+    index = BarSeries(index_bars)
+
+    book: dict[str, Order] = {}
+    bars: dict[str, BarSeries] = {}
+    for k in range(orders):
+        symbol = f"SYM{k:04d}"
+        side = Side.BUY if k % 2 == 0 else Side.SELL
+        base = float(rng.uniform(20.0, 200.0))
+        quantity = float(round(rng.uniform(20_000.0, 80_000.0), -2))
+        noise = np.cumsum(rng.normal(0.0, idiosyncratic_volatility_bps, SESSION_MINUTES))
+        start_minute = int(rng.integers(10, 40))
+        start = opening + start_minute * minute
+        finish = start + execution_minutes * minute
+        prices: list[float] = []
+        series_bars = []
+        for i in range(SESSION_MINUTES):
+            moment = opening + i * minute
+            impact = side.sign * _impact_bps(
+                moment, start, finish, permanent_bps, temporary_bps, decay
+            )
+            price = base * (1.0 + (impact + beta * factor[i] + noise[i]) / 1e4)
+            prices.append(price)
+            series_bars.append(Bar(moment, price, price * 1.002, price * 0.998, price, 20_000.0))
+        bars[symbol] = BarSeries(series_bars)
+        fills = tuple(
+            Fill(
+                timestamp=start + i * minute + timedelta(seconds=30),
+                quantity=quantity / execution_minutes,
+                price=round(prices[start_minute + i], 4),
+            )
+            for i in range(execution_minutes)
+        )
+        book[symbol] = Order(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            decision_time=start,
+            arrival_time=start,
+            fills=fills,
+        )
+    return DecayingBook(
+        orders=book,
+        bars=bars,
+        index=index,
+        permanent_bps=permanent_bps,
+        temporary_bps=temporary_bps,
+        half_life=half_life,
+        beta=beta,
     )

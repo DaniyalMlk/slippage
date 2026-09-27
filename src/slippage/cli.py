@@ -25,18 +25,21 @@ import math
 import os
 import sys
 from collections.abc import Sequence
+from datetime import timedelta
 from pathlib import Path
 from typing import TextIO
 
 import numpy as np
 
 from . import __version__
-from .exceptions import SlippageError
+from .exceptions import SlippageError, ValidationError
 from .execution import ExecutionProblem, efficient_frontier, optimal_trajectory
 from .impact import ImpactModel, LinearImpact, PowerLawImpact
 from .io import load_bars, load_orders, write_bars, write_orders
 from .report import COMPONENTS, TcaReport, build_report
+from .reversion import DEFAULT_HORIZONS, reversion_profile
 from .scheduling import schedule_objective, solve_schedule
+from .series import BarSeries
 from .shortfall import DelayBasis
 from .synthetic import synthetic_book
 
@@ -109,6 +112,44 @@ def build_parser() -> argparse.ArgumentParser:
     )
     frontier.add_argument("--json", action="store_true")
 
+    marks = sub.add_parser(
+        "markouts",
+        help="post-trade mark-outs: which part of the impact came back",
+        description=(
+            "Splits the price move over each order's window into the part that "
+            "persisted and the part that reverted. Pass --benchmark: at these "
+            "horizons the market's move is larger than the impact being measured."
+        ),
+    )
+    marks.add_argument("--orders", type=Path, required=True)
+    marks.add_argument("--fills", type=Path, required=True)
+    marks.add_argument("--bars", type=Path, required=True)
+    marks.add_argument(
+        "--horizons",
+        type=_horizon_list,
+        default=list(DEFAULT_HORIZONS),
+        metavar="MINUTES",
+        help="comma-separated minutes after completion. Default 1,5,15,30,60.",
+    )
+    marks.add_argument(
+        "--benchmark",
+        type=Path,
+        default=None,
+        help="bars for an index, whose move is subtracted from every mark-out",
+    )
+    marks.add_argument(
+        "--benchmark-symbol",
+        default=None,
+        help="which symbol in --benchmark to use, if it holds more than one",
+    )
+    marks.add_argument(
+        "--beta",
+        type=float,
+        default=1.0,
+        help="how much of the benchmark's move to subtract. Defaults to 1.",
+    )
+    marks.add_argument("--json", action="store_true")
+
     sample = sub.add_parser("sample-data", help="write a synthetic book to CSV")
     sample.add_argument("--out", type=Path, required=True)
     sample.add_argument("--seed", type=int, default=0)
@@ -168,6 +209,143 @@ def _run_tca(args: argparse.Namespace, out: TextIO) -> None:
         print(file=out)
     else:
         _print_report(report, args.group_by, args.outlier_threshold, out)
+
+
+# -- mark-outs ---------------------------------------------------------------
+
+
+def _horizon_list(text: str) -> list[timedelta]:
+    minutes = _float_list(text)
+    for value in minutes:
+        if value <= 0.0:
+            raise argparse.ArgumentTypeError(
+                f"a mark-out horizon is a positive number of minutes, got {value!r}"
+            )
+    return [timedelta(minutes=value) for value in minutes]
+
+
+def _run_markouts(args: argparse.Namespace, out: TextIO) -> None:
+    orders = load_orders(args.orders, args.fills)
+    bars = load_bars(args.bars)
+    benchmark: BarSeries | None = None
+    if args.benchmark is not None:
+        series = load_bars(args.benchmark)
+        if args.benchmark_symbol is not None:
+            try:
+                benchmark = series[args.benchmark_symbol]
+            except KeyError:
+                raise ValidationError(
+                    f"{args.benchmark} has no symbol {args.benchmark_symbol!r}; it has "
+                    f"{', '.join(sorted(series))}"
+                ) from None
+        elif len(series) == 1:
+            benchmark = next(iter(series.values()))
+        else:
+            raise ValidationError(
+                f"{args.benchmark} holds {len(series)} symbols; name one with --benchmark-symbol"
+            )
+    profile = reversion_profile(
+        orders.values(),
+        bars,
+        horizons=args.horizons,
+        benchmark=benchmark,
+        beta=args.beta,
+    )
+    payload: dict[str, object] = {
+        "orders": profile.orders,
+        "benchmark_adjusted": profile.benchmark_adjusted,
+        "beta": args.beta if profile.benchmark_adjusted else None,
+        "mean_realised_bps": profile.mean_realised_bps,
+        "mean_impact_bps": profile.mean_impact_bps,
+        "impact_standard_error": profile.impact_standard_error,
+        "reverted_fraction": profile.reverted_fraction,
+        "horizons": [
+            {
+                "minutes": point.horizon.total_seconds() / 60.0,
+                "orders": point.orders,
+                "mean_permanent_bps": point.mean_permanent_bps if point.orders else None,
+                "standard_error": point.standard_error if point.orders else None,
+                "mean_reverted_bps": point.mean_reverted_bps if point.orders else None,
+                "reverted_fraction": point.reverted_fraction(profile.mean_impact_bps)
+                if point.orders
+                else None,
+            }
+            for point in profile.points
+        ],
+    }
+    try:
+        decay = profile.decay()
+        payload["decay"] = {
+            "half_life_seconds": decay.half_life.total_seconds(),
+            "asymptote_bps": decay.asymptote_bps,
+            "amplitude_bps": decay.amplitude_bps,
+            "permanent_fraction": decay.permanent_fraction,
+            "r_squared": decay.r_squared,
+        }
+    except SlippageError as refused:
+        # Reported rather than raised: the curve is still worth printing when no
+        # half-life can be read off it, and *why* it could not is the finding.
+        payload["decay"] = None
+        payload["decay_refused"] = str(refused)
+    if args.json:
+        json.dump(payload, out, indent=2, allow_nan=False)
+        print(file=out)
+        return
+
+    adjustment = (
+        f"market-adjusted at beta {args.beta:g}"
+        if profile.benchmark_adjusted
+        else "NOT market-adjusted"
+    )
+    print(
+        f"Mark-outs over {profile.orders} orders, {adjustment}\n",
+        file=out,
+    )
+    print(
+        f"  realised cost against arrival   {profile.mean_realised_bps:8.2f} bps",
+        file=out,
+    )
+    print(
+        f"  impact at completion            {profile.mean_impact_bps:8.2f} bps "
+        f"+/- {profile.impact_standard_error:.2f}\n",
+        file=out,
+    )
+    print(
+        f"  {'horizon':>9}  {'orders':>6}  {'persisted':>12}  {'reverted':>9}  {'of impact':>9}",
+        file=out,
+    )
+    for point in profile.points:
+        if not point.orders:
+            print(
+                f"  {point.horizon.total_seconds() / 60.0:7.0f}m  {0:6d}  {'no data':>12}",
+                file=out,
+            )
+            continue
+        fraction = point.reverted_fraction(profile.mean_impact_bps)
+        print(
+            f"  {point.horizon.total_seconds() / 60.0:7.0f}m  {point.orders:6d}  "
+            f"{point.mean_permanent_bps:7.2f} +/-{point.standard_error:4.2f}  "
+            f"{point.mean_reverted_bps:9.2f}  "
+            f"{'--' if fraction is None else format(fraction, '9.1%')}",
+            file=out,
+        )
+    decayed = payload["decay"]
+    if isinstance(decayed, dict):
+        print(
+            f"\n  half-life {decayed['half_life_seconds']:.0f}s, heading for "
+            f"{decayed['asymptote_bps']:.2f} bps of permanent impact "
+            f"(r-squared {decayed['r_squared']:.3f})",
+            file=out,
+        )
+    else:
+        print(f"\n  no half-life: {payload['decay_refused']}", file=out)
+    if not profile.benchmark_adjusted:
+        print(
+            "\n  No benchmark was given. Over an hour a stock's own move is tens of "
+            "basis points\n  against single figures of impact, so most of the numbers "
+            "above are the market's.\n  Pass --benchmark with an index series.",
+            file=out,
+        )
 
 
 # -- schedule and frontier --------------------------------------------------
@@ -302,6 +480,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     args = build_parser().parse_args(argv)
     runners = {
         "tca": _run_tca,
+        "markouts": _run_markouts,
         "schedule": _run_schedule,
         "frontier": _run_frontier,
         "sample-data": _run_sample,

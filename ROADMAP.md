@@ -75,3 +75,63 @@ untestable.
 - [x] `implementation_shortfall` reduced to a wrapper over it
 - [x] Property test driving both routes over randomly generated orders
 - [x] The timestamp-independence the totals path relies on, asserted not assumed
+
+## Phase 10 — Which part of the impact came back
+
+`fit_permanent` documented its second argument as the moves that persisted after
+each order completed and nothing in the library measured them. The report had no
+post-trade measurement at all, so a total cost against arrival could not be split
+into the part a slower schedule avoids and the part it does not — which is the
+only thing the impact model is for.
+
+- [x] Mark-outs at a set of horizons after completion, signed for the side
+- [x] The move over the order window split into persisted and reverted, with the
+      identity between them asserted rather than assumed
+- [x] A benchmark subtracted with a beta, and the result recording whether it was
+- [x] Aggregation across orders with standard errors per horizon
+- [x] An `observed` flag per mark-out, because `price_at` clamps to the final
+      close and would otherwise report no data as no movement
+- [x] An exponential fitted to the curve by separable least squares, refusing a
+      half-life where the curve does not decay
+- [x] `permanent_moves_from_orders`, the pair `fit_permanent` always wanted
+- [x] A `markouts` command that says in its own output when no benchmark was given
+- [x] `synthetic.decaying_book`, because the existing generator keeps impact out
+      of the prints on purpose and a mark-out reads impact off the prints
+- [x] The comparison measured over 25 books in a worked example that runs in CI
+
+The measurement that matters is not the mark-out, it is what removing the market
+does to it. Twenty-five books of 120 orders, 4bps of permanent impact and 6 of
+temporary decaying with a 208-second half-life:
+
+| figure | truth | market in | market out |
+|---|---|---|---|
+| impact at completion, bps | 10.00 | 9.99 (off 0.80) | 10.02 (off 0.35) |
+| reverted fraction by an hour | 0.600 | 0.600 (off 0.098) | 0.609 (off 0.046) |
+| fitted half-life, seconds | 208 | 244 (off 90) | 222 (off 34) |
+| fitted permanent impact, bps | 4.00 | 3.68 (off 0.88) | 3.90 (off 0.48) |
+| standard error at an hour, bps | — | 2.35 | 0.82 |
+| `fit_permanent` t-statistic | — | 1.74, below 2 in 16 of 25 | 4.55, below 2 in 0 of 25 |
+
+Both are unbiased, which is why leaving the market in is dangerous rather than
+obviously wrong: the means are right and only the spread gives it away. The
+t-statistic row is the one that settles it — with the market in, the permanent
+coefficient cannot be established in most books built with permanent impact in
+them by construction.
+
+Two assertions written from intuition were false when measured, and both are
+recorded rather than loosened. The benchmark-adjusted point estimate is *not* the
+closer one on a single seed — 9.51 against 9.91 for a truth of 10 on the seed the
+tests use, which is what standard errors of 0.40 and 1.69 do. And the reverted move
+is *not* measured more precisely than the persisted one despite covering a shorter
+interval: 1.4230 against 1.4228 at fifteen minutes, because every order in a book
+shares one market path so cross-order errors are not independent draws.
+
+The benchmark subtraction is on simple returns: exact at a beta of one, where the
+stock's price is the benchmark's times a constant, and first-order elsewhere — 0.04
+basis points against a market that wandered thirty. Using the wrong beta leaves 8.
+
+One defect the tests found. The headline reverted fraction was taken from the last
+horizon asked for, which is routinely past the end of the bars, so it was a NaN.
+`json.dumps` writes that bare and `json.loads` reads it back without complaint, so
+a round trip does not catch it and a strict parser at the far end rejects the whole
+document.
