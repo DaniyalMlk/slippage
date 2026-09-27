@@ -58,6 +58,8 @@ jobs:
           /tmp/clean/bin/slippage --version
           /tmp/clean/bin/slippage sample-data --out /tmp/book
           /tmp/clean/bin/slippage tca --orders /tmp/book/orders.csv --fills /tmp/book/fills.csv --bars /tmp/book/bars.csv
+          /tmp/clean/bin/slippage markouts --orders /tmp/book/orders.csv --fills /tmp/book/fills.csv --bars /tmp/book/bars.csv
+          /tmp/clean/bin/slippage markouts --orders /tmp/book/orders.csv --fills /tmp/book/fills.csv --bars /tmp/book/bars.csv --horizons 2,10,30 --json > /dev/null
           /tmp/clean/bin/slippage frontier --quantity 1e6 --horizon 5 --periods 5 --volatility 0.95 --gamma 2.5e-7 --eta 2.5e-6
       # These assertions read License-Expression, License-File and the
       # classifiers out of dist-info. In the test job that dist-info belongs to

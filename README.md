@@ -105,6 +105,27 @@ risk. The objective the trader asked to minimise, `E + λV`, rises from
 prints the efficient frontier. Every subcommand takes `--json`, and bad input
 exits with status 2 and a message naming the file and line.
 
+```bash
+slippage markouts --orders book/orders.csv --fills book/fills.csv \
+    --bars book/bars.csv --benchmark index.csv
+```
+
+```
+Mark-outs over 60 orders, market-adjusted at beta 1
+
+  realised cost against arrival       3.98 bps
+  impact at completion               10.52 bps +/- 0.53
+
+    horizon  orders     persisted   reverted  of impact
+        1m      60     9.34 +/-0.53       1.18      11.2%
+        5m      60     6.80 +/-0.57       3.72      35.4%
+       15m      60     4.49 +/-0.71       6.03      57.3%
+       30m      60     4.36 +/-0.89       6.17      58.6%
+       60m      60     3.46 +/-1.08       7.07      67.1%
+
+  half-life 279s, heading for 3.84 bps of permanent impact (r-squared 0.985)
+```
+
 ## Scoring an execution
 
 ```python
@@ -248,6 +269,94 @@ made 3% worse is the first one the report flags.
 `compare_to_model` sets each order's realised trading cost beside what a fitted
 square-root law expected. The comparison is per executed share, so an order
 that was cut short is judged on what it traded.
+
+## Which part of the impact came back
+
+A cost against arrival contains both impact terms and the schedule only responds
+to one of them. `slippage.reversion` marks the order out at a set of horizons
+after it completes and splits the move over the order window into the part that
+persisted and the part that reverted:
+
+```python
+from slippage import reversion_profile, permanent_moves_from_orders, fit_permanent
+
+profile = reversion_profile(orders, bars, benchmark=index)
+profile.mean_impact_bps              # 10.52 +/- 0.53
+profile.at(timedelta(minutes=60)).mean_permanent_bps
+profile.reverted_fraction            # 0.67 of the impact came back
+profile.decay().half_life            # 279 seconds
+profile.decay().asymptote_bps        # 3.84 bps that did not
+
+# and the pair fit_permanent always wanted and nothing produced
+fit_permanent(*permanent_moves_from_orders(
+    orders, bars, horizon=timedelta(minutes=45), benchmark=index,
+))
+```
+
+That last call is the gap this closes. `fit_permanent` documents its second
+argument as "the price changes that persisted after each order completed,
+typically measured well after the last fill" and nothing measured them: a caller
+had to walk the bars, choose a horizon and sign the move for the side, and getting
+any of the three wrong gives a coefficient with the right units and the wrong
+value.
+
+### The market is larger than the thing being measured
+
+Over the eighty minutes from arrival to an hour past completion, a stock's own
+move accumulates about twenty-seven basis points against perhaps ten of impact. A
+mark-out with the market left in is mostly a report about the market, and
+`examples/mark_outs.py` measures exactly how much that costs. Twenty-five books of
+120 orders, built with 4 bps of permanent impact and 6 of temporary decaying with
+a 208-second half-life:
+
+| figure | truth | market left in | market taken out |
+|---|---|---|---|
+| impact at completion, bps | 10.00 | 9.99 (off 0.80) | 10.02 (off 0.35) |
+| reverted fraction by an hour | 0.600 | 0.600 (off 0.098) | 0.609 (off 0.046) |
+| fitted half-life, seconds | 208 | 244 (off 90) | 222 (off 34) |
+| fitted permanent impact, bps | 4.00 | 3.68 (off 0.88) | 3.90 (off 0.48) |
+| standard error at an hour, bps | — | 2.35 | 0.82 |
+| `fit_permanent` t-statistic | — | 1.74, below 2 in **16 of 25** | 4.55, below 2 in **0 of 25** |
+
+Both estimators are unbiased: the means are right either way, and a reader shown
+only the middle column would have no reason to think anything was wrong. What the
+adjustment buys is precision, roughly tripled on every figure.
+
+The last row is what decides it. `fit_permanent` has to establish that permanent
+impact exists at all, and with the market left in it fails to do so in most of
+these books — a t-statistic below 2 on 120 orders, on data built with 4 basis
+points of permanent impact in it by construction. So the benchmark adjustment is
+not a refinement of this measurement. Without it the measurement does not work,
+and the report says so in its own output when no benchmark was passed.
+
+The subtraction is on simple returns, which is exact when a stock moves with the
+benchmark one for one and first-order otherwise — a residual of 0.04 basis points
+against a market that wandered thirty. Using the wrong beta is the error that
+matters: a beta of 1 on a stock whose beta is a half leaves 8 basis points, two
+hundred times the rounding.
+
+### Three smaller decisions
+
+`price_at` clamps to the final close past the end of a series, which is right for
+a price lookup and wrong here: without a flag, "we have no data that far out" and
+"the price stopped moving" are the same number, and the second is the more
+flattering. Every `MarkOut` carries `observed`, aggregation counts only the
+observed ones, and the count is per horizon in the result.
+
+The decay fit is separable least squares — for a fixed time constant the curve is
+linear in its asymptote and amplitude, so those come out in closed form and only
+the time constant is searched, which leaves no starting values to get wrong. It
+**refuses** rather than reporting a half-life when the fitted amplitude is
+negative: an impact that grows with the horizon is what information looks like,
+and dressing that up as decay would hide it.
+
+A reverted *fraction* is withheld, as `None`, when the impact it divides by is
+under half a basis point. At a tenth of a basis point of impact, a tenth of a
+basis point of noise is a reverted fraction of one.
+
+`synthetic.decaying_book` exists because `synthetic_book` deliberately keeps
+impact out of the prints — the right shape for calibrating a cost model against an
+arrival benchmark, and empty of anything a mark-out could read.
 
 ## Market impact
 
