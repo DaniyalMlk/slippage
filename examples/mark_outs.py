@@ -23,7 +23,6 @@ Run it with ``python examples/mark_outs.py``.
 
 from __future__ import annotations
 
-import math
 import statistics
 from datetime import timedelta
 
@@ -47,8 +46,8 @@ TRUE_HALF_LIFE = timedelta(seconds=208)
 
 
 def true_reverted_fraction() -> float:
-    decayed = 1.0 - 2.0 ** (
-        -HOUR.total_seconds() / TRUE_HALF_LIFE.total_seconds()
+    decayed = 1.0 - float(
+        2.0 ** (-HOUR.total_seconds() / TRUE_HALF_LIFE.total_seconds())
     )
     return TRUE_TEMPORARY * decayed / (TRUE_PERMANENT + TRUE_TEMPORARY)
 
@@ -71,8 +70,8 @@ def the_measurement_is_exact_without_noise() -> bool:
     print(f"    impact at completion {profile.impact_bps:.6f} bps\n")
     print(f"    {'horizon':>9}  {'persisted':>10}  {'the truth':>10}  {'error':>10}")
     for mark in profile.marks:
-        truth = TRUE_PERMANENT + TRUE_TEMPORARY * 2.0 ** (
-            -mark.horizon.total_seconds() / TRUE_HALF_LIFE.total_seconds()
+        truth = TRUE_PERMANENT + TRUE_TEMPORARY * float(
+            2.0 ** (-mark.horizon.total_seconds() / TRUE_HALF_LIFE.total_seconds())
         )
         error = abs(mark.permanent_bps - truth)
         worst = max(worst, error)
@@ -200,4 +199,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # Every other example in this folder ends with a bare `main()`, and the test
+    # that runs them all does so with `runpy`, so a `SystemExit` here would
+    # surface as a test failure even on a zero exit. The figures are asserted
+    # inside `main`, and it returns non-zero rather than exiting.
+    if main():
+        raise SystemExit(1)
