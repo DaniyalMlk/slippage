@@ -20,6 +20,7 @@ than a traceback.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import math
 import os
@@ -32,6 +33,12 @@ from typing import TextIO
 import numpy as np
 
 from . import __version__
+from .basket import (
+    BasketProblem,
+    basket_trajectory,
+    compare_to_independent,
+    hedge_direction,
+)
 from .exceptions import SlippageError, ValidationError
 from .execution import ExecutionProblem, efficient_frontier, optimal_trajectory
 from .impact import ImpactModel, LinearImpact, PowerLawImpact
@@ -149,6 +156,51 @@ def build_parser() -> argparse.ArgumentParser:
         help="how much of the benchmark's move to subtract. Defaults to 1.",
     )
     marks.add_argument("--json", action="store_true")
+
+    liquidate = sub.add_parser(
+        "basket",
+        help="liquidate a basket, with the legs solved together",
+        description=(
+            "Reads a CSV of holdings and a covariance matrix and solves the "
+            "liquidation jointly, which is not the same as solving each leg on its "
+            "own: a hedged pair carries almost no risk while both legs are on, so "
+            "the joint schedule keeps them on together. Reports the eigen-"
+            "directions the basket is really liquidated along, and the same "
+            "problem solved leg by leg for comparison."
+        ),
+    )
+    liquidate.add_argument(
+        "--holdings",
+        type=Path,
+        required=True,
+        help="CSV with columns symbol,quantity,eta,gamma. Quantities are signed, "
+        "positive long. eta and gamma are that leg's own impact coefficients.",
+    )
+    liquidate.add_argument(
+        "--covariance",
+        type=Path,
+        required=True,
+        help="CSV of the covariance matrix, one row per asset in the order the "
+        "holdings file gives them, no header. In currency per share squared per "
+        "unit of the horizon's clock.",
+    )
+    liquidate.add_argument(
+        "--cross-impact",
+        type=Path,
+        default=None,
+        help="CSV of the full temporary impact matrix, replacing the diagonal "
+        "built from the holdings file. Trading one name moves the others, and with "
+        "this the schedules couple even when the returns do not.",
+    )
+    liquidate.add_argument("--horizon", type=float, default=1.0)
+    liquidate.add_argument("--periods", type=int, default=20)
+    liquidate.add_argument("--risk-aversion", type=float, required=True)
+    liquidate.add_argument(
+        "--compare",
+        action="store_true",
+        help="also solve it leg by leg and report what the joint solution saves",
+    )
+    liquidate.add_argument("--json", action="store_true")
 
     sample = sub.add_parser("sample-data", help="write a synthetic book to CSV")
     sample.add_argument("--out", type=Path, required=True)
@@ -475,6 +527,164 @@ def _run_sample(args: argparse.Namespace, out: TextIO) -> None:
     )
 
 
+def _read_matrix(path: Path, size: int, name: str) -> list[list[float]]:
+    """Read a square matrix of numbers, naming the line that is wrong.
+
+    No header, one row per asset, in the order the holdings file gives them.
+    Errors name the line for the same reason the rest of this interface does: a
+    matrix is pasted together by hand and "row 3 has 2 entries" is different
+    information from a traceback out of a dataclass.
+    """
+    rows: list[list[float]] = []
+    for number, raw in enumerate(path.read_text().splitlines(), start=1):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        fields = [field for field in line.replace(",", " ").split() if field]
+        try:
+            values = [float(field) for field in fields]
+        except ValueError:
+            raise SlippageError(
+                f"{name}, line {number}: {line!r} is not a row of numbers"
+            ) from None
+        if len(values) != size:
+            raise SlippageError(
+                f"{name}, line {number} has {len(values)} entries for {size} assets"
+            )
+        rows.append(values)
+    if len(rows) != size:
+        raise SlippageError(f"{name} has {len(rows)} rows for {size} assets")
+    return rows
+
+
+def _run_basket(args: argparse.Namespace, out: TextIO) -> None:
+    names: list[str] = []
+    quantities: list[float] = []
+    etas: list[float] = []
+    gammas: list[float] = []
+    with args.holdings.open(newline="") as handle:
+        reader = csv.DictReader(handle)
+        required = {"symbol", "quantity", "eta", "gamma"}
+        missing = required - set(reader.fieldnames or [])
+        if missing:
+            raise SlippageError(f"the holdings file is missing {', '.join(sorted(missing))}")
+        for number, row in enumerate(reader, start=2):
+            try:
+                quantities.append(float(row["quantity"]))
+                etas.append(float(row["eta"]))
+                gammas.append(float(row["gamma"]))
+            except (TypeError, ValueError):
+                raise SlippageError(
+                    f"the holdings file, line {number}: a number is missing or unreadable"
+                ) from None
+            names.append(str(row["symbol"]))
+    if not names:
+        raise SlippageError("the holdings file has no rows in it")
+    size = len(names)
+    covariance = _read_matrix(args.covariance, size, "the covariance file")
+    if args.cross_impact is not None:
+        temporary = _read_matrix(args.cross_impact, size, "the cross-impact file")
+    else:
+        temporary = [
+            [etas[row] if row == column else 0.0 for column in range(size)] for row in range(size)
+        ]
+    permanent = [
+        [gammas[row] if row == column else 0.0 for column in range(size)] for row in range(size)
+    ]
+    problem = BasketProblem(
+        holdings=tuple(quantities),
+        temporary=tuple(tuple(row) for row in temporary),
+        permanent=tuple(tuple(row) for row in permanent),
+        covariance=tuple(tuple(row) for row in covariance),
+        horizon=args.horizon,
+        periods=args.periods,
+        names=tuple(names),
+    )
+    solved = basket_trajectory(problem, args.risk_aversion)
+    payload: dict[str, object] = {
+        "assets": list(solved.names),
+        "risk_aversion": args.risk_aversion,
+        "expected_cost": solved.expected_cost,
+        "std": solved.std,
+        "objective": solved.objective,
+        "directions": [
+            {
+                "risk_per_impact": one.risk_per_impact,
+                "kappa": one.kappa,
+                "half_life": None if math.isinf(one.half_life) else one.half_life,
+                "weights": list(one.weights),
+            }
+            for one in solved.directions
+        ],
+        "holdings": [list(row) for row in solved.holdings],
+    }
+    comparison = None
+    if args.compare:
+        comparison = compare_to_independent(problem, args.risk_aversion)
+        payload["independent"] = {
+            "expected_cost": comparison.independent.expected_cost,
+            "std": comparison.independent.std,
+            "objective": comparison.independent.objective,
+        }
+        payload["objective_saving"] = comparison.objective_saving
+        payload["peak_risk_ratio"] = comparison.peak_risk_ratio
+        try:
+            payload["exposure_ratio"] = comparison.exposure_ratio()
+            payload["hedge_direction"] = list(hedge_direction(problem))
+        except ValidationError as refusal:
+            # Not an error: on a symmetric basket both schedules keep the hedge
+            # exactly and the ratio is one rounding error over another. Saying so
+            # is more useful than printing a number that means nothing.
+            payload["exposure_ratio"] = None
+            payload["exposure_note"] = str(refusal)
+    if args.json:
+        json.dump(payload, out, indent=2)
+        print(file=out)
+        return
+    print(
+        f"{size} assets over {args.periods} intervals, risk aversion {args.risk_aversion:g}\n",
+        file=out,
+    )
+    print(f"expected cost {solved.expected_cost:,.0f}   sd {solved.std:,.0f}", file=out)
+    print(f"{'direction':>32}{'risk/impact':>14}{'half-life':>12}", file=out)
+    for one in solved.directions:
+        weights = " ".join(f"{value:+.3f}" for value in one.weights)
+        half = "inf" if math.isinf(one.half_life) else f"{one.half_life:.3g}"
+        print(f"{weights:>32}{one.risk_per_impact:>14.4g}{half:>12}", file=out)
+    print(
+        "\nA basket is liquidated along these directions, each at its own pace. "
+        "The riskiest per unit of impact is worked off first; a direction with "
+        "little risk in it is cheap to hold and is left until the end, which is "
+        "why a hedged pair comes off as a pair.",
+        file=out,
+    )
+    if comparison is not None:
+        print(
+            f"\nSolved leg by leg the cost is "
+            f"{comparison.independent.expected_cost:,.0f} against "
+            f"{solved.expected_cost:,.0f}, and the joint solution improves on the "
+            f"whole objective by {comparison.objective_saving:.2%}.",
+            file=out,
+        )
+        try:
+            print(
+                f"At its worst the leg-by-leg schedule leaves "
+                f"{comparison.exposure_ratio():.1f} times as much exposure along "
+                f"the direction the basket starts flat in, which is the part the "
+                f"totals do not show.",
+                file=out,
+            )
+        except ValidationError as refusal:
+            print(str(refusal), file=out)
+        print(
+            f"Its peak one-interval variance is {comparison.peak_risk_ratio:.2f} "
+            f"times the joint solution's: below one means the joint schedule is "
+            f"deliberately the riskier one moment to moment, because a hedged "
+            f"basket is cheap to hold and the optimal schedule holds it longer.",
+            file=out,
+        )
+
+
 def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     stream = sys.stdout if out is None else out
     args = build_parser().parse_args(argv)
@@ -483,6 +693,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         "markouts": _run_markouts,
         "schedule": _run_schedule,
         "frontier": _run_frontier,
+        "basket": _run_basket,
         "sample-data": _run_sample,
     }
     try:

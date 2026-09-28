@@ -313,3 +313,213 @@ class TestMarkOuts:
 
 def text_contains_nan(text: str) -> bool:
     return "NaN" in text or "Infinity" in text
+
+
+# -- the basket command -------------------------------------------------------
+
+
+SIGMA = 0.945
+
+
+@pytest.fixture
+def basket_files(tmp_path: Path) -> tuple[Path, Path]:
+    """A correlated long/short pair whose short leg is four times as expensive."""
+    holdings = tmp_path / "holdings.csv"
+    holdings.write_text("symbol,quantity,eta,gamma\nLIQ,100000,1e-6,1e-7\nILQ,-100000,4e-6,4e-7\n")
+    covariance = tmp_path / "cov.csv"
+    variance = SIGMA * SIGMA
+    covariance.write_text(f"{variance},{0.9 * variance}\n{0.9 * variance},{variance}\n")
+    return holdings, covariance
+
+
+def test_the_basket_command_reports_the_directions(
+    basket_files: tuple[Path, Path],
+) -> None:
+    holdings, covariance = basket_files
+    code, output = run(
+        "basket",
+        "--holdings",
+        str(holdings),
+        "--covariance",
+        str(covariance),
+        "--risk-aversion",
+        "1e-5",
+    )
+    assert code == 0
+    assert "2 assets over 20 intervals" in output
+    assert "risk/impact" in output
+    assert "half-life" in output
+    assert "liquidated along these directions" in output
+
+
+def test_the_basket_command_compares_against_leg_by_leg(
+    basket_files: tuple[Path, Path],
+) -> None:
+    holdings, covariance = basket_files
+    code, output = run(
+        "basket",
+        "--holdings",
+        str(holdings),
+        "--covariance",
+        str(covariance),
+        "--risk-aversion",
+        "1e-5",
+        "--compare",
+    )
+    assert code == 0
+    assert "Solved leg by leg" in output
+    assert "times as much exposure" in output
+    # The counterintuitive half has to be in the output, not only in the docs.
+    assert "deliberately the riskier one" in output
+
+
+def test_the_basket_command_emits_json(basket_files: tuple[Path, Path]) -> None:
+    holdings, covariance = basket_files
+    code, output = run(
+        "basket",
+        "--holdings",
+        str(holdings),
+        "--covariance",
+        str(covariance),
+        "--risk-aversion",
+        "1e-5",
+        "--compare",
+        "--json",
+    )
+    assert code == 0
+    payload = json.loads(output)
+    assert payload["assets"] == ["LIQ", "ILQ"]
+    assert len(payload["directions"]) == 2
+    assert len(payload["holdings"]) == 21
+    assert payload["objective_saving"] > 0.05
+    assert payload["exposure_ratio"] > 5.0
+    assert payload["peak_risk_ratio"] < 1.0
+    # Nothing non-finite: an infinite half-life is written as null on purpose,
+    # because Infinity is not JSON and a strict reader rejects the document.
+    json.dumps(payload, allow_nan=False)
+
+
+def test_a_risk_neutral_basket_writes_a_null_half_life(
+    basket_files: tuple[Path, Path],
+) -> None:
+    holdings, covariance = basket_files
+    code, output = run(
+        "basket",
+        "--holdings",
+        str(holdings),
+        "--covariance",
+        str(covariance),
+        "--risk-aversion",
+        "0",
+        "--json",
+    )
+    assert code == 0
+    payload = json.loads(output)
+    assert all(one["half_life"] is None for one in payload["directions"])
+    json.dumps(payload, allow_nan=False)
+
+
+def test_a_symmetric_basket_says_why_the_exposure_ratio_is_missing(
+    tmp_path: Path,
+) -> None:
+    holdings = tmp_path / "holdings.csv"
+    holdings.write_text("symbol,quantity,eta,gamma\nA,100000,1e-6,1e-7\nB,-100000,1e-6,1e-7\n")
+    covariance = tmp_path / "cov.csv"
+    variance = SIGMA * SIGMA
+    covariance.write_text(f"{variance},{0.9 * variance}\n{0.9 * variance},{variance}\n")
+    code, output = run(
+        "basket",
+        "--holdings",
+        str(holdings),
+        "--covariance",
+        str(covariance),
+        "--risk-aversion",
+        "1e-5",
+        "--compare",
+    )
+    assert code == 0
+    assert "rounding rather than exposure" in output
+
+
+def test_cross_impact_can_be_supplied_as_a_matrix(
+    basket_files: tuple[Path, Path], tmp_path: Path
+) -> None:
+    holdings, covariance = basket_files
+    cross = tmp_path / "cross.csv"
+    cross.write_text("1e-6,5e-7\n5e-7,4e-6\n")
+    code, output = run(
+        "basket",
+        "--holdings",
+        str(holdings),
+        "--covariance",
+        str(covariance),
+        "--cross-impact",
+        str(cross),
+        "--risk-aversion",
+        "1e-5",
+        "--json",
+    )
+    assert code == 0
+    assert json.loads(output)["expected_cost"] > 0.0
+
+
+def test_a_ragged_covariance_row_names_its_line(
+    basket_files: tuple[Path, Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    holdings, _ = basket_files
+    covariance = tmp_path / "bad.csv"
+    covariance.write_text("1.0,0.5\n0.5\n")
+    code, _ = run(
+        "basket",
+        "--holdings",
+        str(holdings),
+        "--covariance",
+        str(covariance),
+        "--risk-aversion",
+        "1e-5",
+    )
+    assert code != 0
+    assert "line 2 has 1 entries for 2 assets" in capsys.readouterr().err
+
+
+def test_a_non_numeric_covariance_entry_names_its_line(
+    basket_files: tuple[Path, Path],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    holdings, _ = basket_files
+    covariance = tmp_path / "bad.csv"
+    covariance.write_text("1.0,0.5\n0.5,par\n")
+    code, _ = run(
+        "basket",
+        "--holdings",
+        str(holdings),
+        "--covariance",
+        str(covariance),
+        "--risk-aversion",
+        "1e-5",
+    )
+    assert code != 0
+    assert "not a row of numbers" in capsys.readouterr().err
+
+
+def test_a_holdings_file_missing_a_column_says_which(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    holdings = tmp_path / "holdings.csv"
+    holdings.write_text("symbol,quantity\nA,100\n")
+    covariance = tmp_path / "cov.csv"
+    covariance.write_text("1.0\n")
+    code, _ = run(
+        "basket",
+        "--holdings",
+        str(holdings),
+        "--covariance",
+        str(covariance),
+        "--risk-aversion",
+        "1e-5",
+    )
+    assert code != 0
+    assert "missing eta, gamma" in capsys.readouterr().err
