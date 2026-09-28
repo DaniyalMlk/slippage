@@ -463,6 +463,103 @@ impact; with one-day intervals the example gives −0.485, −0.970 and +0.511,
 and the tests check both the analytic values against finite differences and
 their convergence to the limits as the interval shrinks.
 
+## Liquidating a basket
+
+`optimal_trajectory` solves one name. Almost nothing is executed one name at a
+time, and a basket is not a collection of single-asset problems for two reasons
+that change the answer rather than refine it.
+
+Risk on the remaining book is `x'Σx`, not a sum of `σ_i²x_i²`. A hedged pair
+carries almost nothing while both legs are on and a great deal once one is gone,
+so the schedule that minimises cost plus risk keeps them on together. And impact
+is a matrix too: trading one name moves the others, so with a non-diagonal
+temporary impact matrix the schedules couple even when the returns do not.
+
+`basket_trajectory` solves it exactly rather than numerically. Substituting
+`y = E^½x` for the effective temporary impact matrix `E = Η − Γτ/2` turns the cost
+term into a plain sum of squared increments and the risk term into `y'Ay` with
+`A = E^-½ΣE^-½`. Diagonalise `A` and each eigen-coordinate is the scalar
+Almgren–Chriss problem with unit impact and variance `μ_i`: its own urgency `κ_i`,
+its own `sinh`, its own half-life. So a basket is liquidated along
+eigen-directions, and `μ_i` is that direction's risk per unit of impact — large
+means anxious and worked off first, near zero means cheap to hold and left until
+the end. On a correlated long/short pair those two directions are the net and the
+spread, which is why the pair comes off as a pair.
+
+```
+$ slippage basket --holdings holdings.csv --covariance cov.csv       --risk-aversion 1e-5 --compare
+2 assets over 20 intervals, risk aversion 1e-05
+
+expected cost 52,525   sd 22,782
+                       direction   risk/impact   half-life
+                   -0.974 -0.228     1.084e+06       0.304
+                   +0.684 -0.730     3.512e+04        1.69
+```
+
+### The reduction is the test worth having
+
+A one-asset basket has to reproduce `optimal_trajectory`, and the two routes share
+no arithmetic: one evaluates a `sinh` at a closed-form `κ`, the other takes a
+matrix square root, an eigen-decomposition and two changes of basis. They agree to
+machine precision at every risk aversion from zero to `10⁻²`. An uncorrelated
+diagonal basket has to reproduce two independent single-asset solutions, and does.
+
+That reduction found a real error. The permanent impact of a complete liquidation
+is *not* `X'ΓX/2`: each trade is not charged for its own impact, so it is that
+less `Σ_k n_k'Γn_k/2`, and the matrix the schedule is charged against is the
+effective one — the same correction as the scalar `η̃` and the same reason for it.
+Computing the cost with the raw temporary matrix overstated it by two parts in a
+thousand, which is small enough to read as a rounding difference against the
+scalar solver and large enough to mean the two were not the same model.
+
+### What solving the legs together is worth, measured
+
+A long/short pair of 100,000 shares each, correlated at 0.9, liquidated over a day
+in 20 intervals at a risk aversion giving `κT ≈ 3`. Against solving each leg as
+its own problem and scoring both schedules against the full matrices:
+
+| legs | objective saving |
+| --- | --- |
+| identical | 23.8% |
+| short leg 4× the impact | 12.1% |
+| short leg 10× the impact | 6.1% |
+| uncorrelated, identical | 0.0% exactly |
+
+The last row is the check that the saving is the correlation and not the solver.
+
+Two things about the comparison are the opposite of the natural assumption, and
+both are in the command's own output rather than only here.
+
+**The joint solution is riskier moment to moment, not safer.** Its peak
+one-interval variance is 1.19 times the independent solution's on the symmetric
+pair and 1.10 on the illiquid one. A hedged pair is cheap to hold, so the optimal
+schedule holds it *longer* and pays less impact. It is the cheaper schedule at the
+same risk aversion, not the calmer one — the preference lives in the risk
+aversion.
+
+**Where the independent solution is actually wrong is the shape, by an order of
+magnitude.** It works each leg at the pace that leg's own liquidity justifies, so
+on a pair whose legs differ in liquidity the liquid one finishes first and the
+book is left outright mid-trade. With the short leg four times as expensive, the
+leg-by-leg schedule reaches a net exposure of 18,961 shares of a 100,000-share
+pair against the joint solution's 2,025 — a factor of 9.4, against an objective
+difference of 12.1%.
+
+`exposure_ratio` measures that along `hedge_direction`: the riskiest direction the
+basket *starts flat in*, which is the top eigenvector of the covariance projected
+onto the orthogonal complement of the initial holdings. A schedule cannot be
+blamed for exposure it inherits, only for exposure it creates, and what it creates
+lives in the directions the basket had none in. On a dollar-neutral pair that
+derivation returns the net of the two legs; the point of deriving it rather than
+special-casing it is that a book with six legs and two hedges has the same
+question and no obvious answer.
+
+On a symmetric pair both schedules keep the hedge exactly, so that ratio is one
+rounding error over another — 0.43 in a first draft of this, which reads as a
+finding and is noise. It is refused, with a guard relative to the basket's own
+size, because the residue is of order `eps` times that and an absolute threshold
+never fires.
+
 ## Constrained schedules
 
 The closed form needs linear impact and no constraints. `solve_schedule` solves
@@ -586,6 +683,7 @@ generating 0.7 directly.
 | `shortfall`, `report` | implementation shortfall, fill attribution, book-level TCA and outliers |
 | `impact`, `calibration` | impact models, schedule costs and fitting them to executions |
 | `execution` | Almgren–Chriss trajectories, the efficient frontier, half-life sensitivities |
+| `basket` | the multi-asset liquidation, its eigen-directions, and the leg-by-leg comparison |
 | `scheduling` | the constrained dynamic programme and its re-optimisation policy |
 | `volume`, `simulate` | volume profiles, TWAP/VWAP/POV schedules and Monte Carlo costs |
 | `io`, `cli`, `synthetic` | CSV input and output, the `slippage` command, synthetic books |
