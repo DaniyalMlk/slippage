@@ -2,6 +2,20 @@
 
 from __future__ import annotations
 
+from .basket import (
+    CONDITION_FLOOR,
+    MAX_BASKET_ASSETS,
+    BasketComparison,
+    BasketProblem,
+    BasketTrajectory,
+    Direction,
+    basket_frontier,
+    basket_moments,
+    basket_trajectory,
+    compare_to_independent,
+    hedge_direction,
+    independent_trajectories,
+)
 from .benchmarks import Benchmark, Score, benchmark_price, order_window, score_order
 from .calibration import (
     Estimate,
@@ -94,11 +108,16 @@ from .volume import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "CONDITION_FLOOR",
     "DEFAULT_HORIZONS",
     "IMPACT_FLOOR_BPS",
+    "MAX_BASKET_ASSETS",
     "Aggregate",
     "Bar",
     "BarSeries",
+    "BasketComparison",
+    "BasketProblem",
+    "BasketTrajectory",
     "Benchmark",
     "CalibrationError",
     "ConvergenceError",
@@ -108,6 +127,7 @@ __all__ = [
     "DecayProfile",
     "DecayingBook",
     "DelayBasis",
+    "Direction",
     "Estimate",
     "ExecutionProblem",
     "ExecutionSample",
@@ -143,9 +163,13 @@ __all__ = [
     "VolumeProfile",
     "__version__",
     "attribute_fills",
+    "basket_frontier",
+    "basket_moments",
+    "basket_trajectory",
     "benchmark_price",
     "build_report",
     "closed_form_moments",
+    "compare_to_independent",
     "compare_to_model",
     "cost_bps",
     "cost_currency",
@@ -157,7 +181,9 @@ __all__ = [
     "fit_permanent",
     "fit_power_law",
     "half_life_sensitivity",
+    "hedge_direction",
     "implementation_shortfall",
+    "independent_trajectories",
     "linear_trajectory",
     "load_bars",
     "load_orders",

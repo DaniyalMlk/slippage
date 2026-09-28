@@ -61,6 +61,10 @@ jobs:
           /tmp/clean/bin/slippage markouts --orders /tmp/book/orders.csv --fills /tmp/book/fills.csv --bars /tmp/book/bars.csv
           /tmp/clean/bin/slippage markouts --orders /tmp/book/orders.csv --fills /tmp/book/fills.csv --bars /tmp/book/bars.csv --horizons 2,10,30 --json > /dev/null
           /tmp/clean/bin/slippage frontier --quantity 1e6 --horizon 5 --periods 5 --volatility 0.95 --gamma 2.5e-7 --eta 2.5e-6
+          printf '%s\n' 'symbol,quantity,eta,gamma' 'LIQ,100000,1e-6,1e-7' 'ILQ,-100000,4e-6,4e-7' > /tmp/holdings.csv
+          printf '%s\n' '0.893,0.804' '0.804,0.893' > /tmp/cov.csv
+          /tmp/clean/bin/slippage basket --holdings /tmp/holdings.csv --covariance /tmp/cov.csv --risk-aversion 1e-5 --compare
+          /tmp/clean/bin/slippage basket --holdings /tmp/holdings.csv --covariance /tmp/cov.csv --risk-aversion 1e-5 --json > /dev/null
       # These assertions read License-Expression, License-File and the
       # classifiers out of dist-info. In the test job that dist-info belongs to
       # an editable install, written once and able to agree with a
