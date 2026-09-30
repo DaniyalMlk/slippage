@@ -49,6 +49,12 @@ from .scheduling import schedule_objective, solve_schedule
 from .series import BarSeries
 from .shortfall import DelayBasis
 from .synthetic import synthetic_book
+from .transient import (
+    ExponentialDecay,
+    PowerLawDecay,
+    optimal_transient_schedule,
+    residual_impact,
+)
 
 __all__ = ["main"]
 
@@ -201,6 +207,48 @@ def build_parser() -> argparse.ArgumentParser:
         help="also solve it leg by leg and report what the joint solution saves",
     )
     liquidate.add_argument("--json", action="store_true")
+
+    transient = sub.add_parser(
+        "transient",
+        help="schedule against a decay kernel rather than a trading rate",
+        description=(
+            "The rate models charge for the current trading speed, so their "
+            "temporary impact is gone the instant the speed is zero. A decay "
+            "kernel lets it come back at a rate instead, which is what "
+            "`slippage markouts` measures. The cost-minimising schedule is then a "
+            "linear solve, and for an exponential kernel it comes out as a block, "
+            "a constant rate, and a block."
+        ),
+    )
+    transient.add_argument("--quantity", type=float, required=True)
+    transient.add_argument("--horizon", type=float, required=True)
+    transient.add_argument("--periods", type=int, required=True)
+    transient.add_argument(
+        "--gamma", type=float, default=0.0, help="permanent impact, price per share"
+    )
+    transient.add_argument(
+        "--eta", type=float, required=True, help="transient impact, price per share"
+    )
+    transient.add_argument(
+        "--half-life",
+        dest="half_life",
+        type=float,
+        default=None,
+        help="decay half-life in the same units as --horizon",
+    )
+    transient.add_argument(
+        "--resilience",
+        type=float,
+        default=None,
+        help="decay rate per unit time; the same parameter as --half-life",
+    )
+    transient.add_argument(
+        "--exponent",
+        type=float,
+        default=None,
+        help="use a power-law kernel with this exponent, scaled by --half-life",
+    )
+    transient.add_argument("--json", action="store_true")
 
     sample = sub.add_parser("sample-data", help="write a synthetic book to CSV")
     sample.add_argument("--out", type=Path, required=True)
@@ -476,6 +524,81 @@ def _run_schedule(args: argparse.Namespace, out: TextIO) -> None:
     )
 
 
+def _run_transient(args: argparse.Namespace, out: TextIO) -> None:
+    """Schedule against a decay kernel rather than against a trading rate.
+
+    The interesting column is the saving against a constant rate, because it is
+    zero at both extremes of resilience and the reason is different at each end:
+    decay fast enough and the constant rate is already optimal, decay slowly
+    enough and every schedule ties.
+    """
+    if args.half_life is not None and args.resilience is not None:
+        raise SlippageError(
+            "give either --half-life or --resilience, not both; they are the same "
+            "parameter written two ways"
+        )
+    if args.half_life is None and args.resilience is None:
+        raise SlippageError("the kernel needs a decay rate: pass --half-life or --resilience")
+    tau = args.horizon / args.periods
+    kernel: ExponentialDecay | PowerLawDecay
+    if args.exponent is not None:
+        if args.half_life is None:
+            raise SlippageError("a power-law kernel is scaled by --half-life, not --resilience")
+        kernel = PowerLawDecay(
+            permanent=args.gamma,
+            transient=args.eta,
+            exponent=args.exponent,
+            scale=args.half_life,
+        )
+    else:
+        resilience = (
+            args.resilience if args.resilience is not None else math.log(2.0) / args.half_life
+        )
+        kernel = ExponentialDecay(permanent=args.gamma, transient=args.eta, resilience=resilience)
+    plan = optimal_transient_schedule(kernel, args.quantity, args.periods, tau)
+    horizons = [multiple * tau for multiple in (0.0, 1.0, 2.0, 5.0, 10.0)]
+    residual = residual_impact(kernel, list(plan.trades), tau, horizons)
+    if args.json:
+        payload = {
+            "kernel": type(kernel).__name__,
+            "instantaneous_impact_per_share": kernel.value(0.0),
+            "permanent_impact_per_share": kernel.permanent,
+            "trades": list(plan.trades),
+            "cost": plan.cost,
+            "uniform_cost": plan.uniform_cost,
+            "saving": plan.saving,
+            "front_load": plan.front_load,
+            "residual_impact": [
+                {"periods_after": multiple, "impact": value}
+                for multiple, value in zip((0.0, 1.0, 2.0, 5.0, 10.0), residual, strict=True)
+            ],
+        }
+        json.dump(payload, out, indent=2)
+        print(file=out)
+        return
+    print(f"kernel: {type(kernel).__name__}", file=out)
+    print(
+        f"impact per share: {kernel.value(0.0):.6g} now, {kernel.permanent:.6g} permanent",
+        file=out,
+    )
+    print(f"{'period':>6}{'start':>10}{'trade':>14}{'remaining':>14}", file=out)
+    remaining = args.quantity
+    for index, size in enumerate(plan.trades):
+        remaining -= size
+        print(
+            f"{index:>6}{index * tau:>10.4g}{size:>14,.0f}{remaining:>14,.0f}",
+            file=out,
+        )
+    print(
+        f"\ncost {plan.cost:,.0f} against {plan.uniform_cost:,.0f} at a constant rate: "
+        f"{100.0 * plan.saving:.3f}% saved, first slice {plan.front_load:.3g}x uniform",
+        file=out,
+    )
+    print("\nimpact left after the order, in periods:", file=out)
+    for multiple, value in zip((0.0, 1.0, 2.0, 5.0, 10.0), residual, strict=True):
+        print(f"{multiple:>10.0f}{value:>16.6g}", file=out)
+
+
 def _run_frontier(args: argparse.Namespace, out: TextIO) -> None:
     impact = _impact(args)
     if not isinstance(impact, LinearImpact):
@@ -694,6 +817,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         "schedule": _run_schedule,
         "frontier": _run_frontier,
         "basket": _run_basket,
+        "transient": _run_transient,
         "sample-data": _run_sample,
     }
     try:
