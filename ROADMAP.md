@@ -205,3 +205,63 @@ included the starting holdings read exactly 1.00 for the same reason. Both now
 exclude it. And the exposure ratio on a symmetric pair is one rounding error over
 another — 0.43, which reads as a finding — so it is refused, with the guard
 relative to the basket's own size, because the residue is of order eps times that.
+
+## Phase 12 — Impact that decays at a rate
+
+- [x] A decay kernel with the permanent floor inside it: exponential
+      (Obizhaeva-Wang) and power law (Bouchaud), with both existing descriptions
+      of impact as its limits
+- [x] The cost of a schedule as the quadratic form it is, checked against walking
+      the price path trade by trade
+- [x] No-price-manipulation enforced rather than documented, with the offending
+      round trip returned instead of a boolean
+- [x] The cost-minimising schedule as a linear solve, checked against a numerical
+      optimiser on the same problem
+- [x] The mark-out curve the model predicts, so `markouts` output is an input here
+- [x] A kernel read back off a measured decay, with the size of what that loses
+      derived rather than waved at
+- [x] A command-line entry point
+
+The result worth having is that nothing here needs an optimiser. Writing the cost
+as `n' K n / 2` makes the cost-minimising schedule a linear solve, and for an
+exponential kernel its answer is a block, a constant rate and a block — the shape
+Obizhaeva and Wang derive in continuous time, arriving here without anything in
+the code imposing it. Against SLSQP on the same problem the closed form is 0.27%
+cheaper at low resilience, because the optimiser stops early.
+
+Two measurements that the natural guess gets wrong.
+
+The gain from scheduling well is not monotone in resilience. Both limits give
+nothing: decay fast enough and the cost matrix is diagonal, so a constant rate is
+already optimal; decay slowly enough and it is constant, so every schedule ties.
+The peak is in between, it depends only on resilience times horizon, and it drifts
+with how finely the horizon is cut — 3.57% at four slices to 11.46% at
+sixty-four, because the solution wants two instantaneous blocks.
+
+And a mark-out recovers the resilience exactly while barely recovering the
+amplitude. The horizon factors out of every term of an exponential kernel at once,
+so the curve after the order is a clean exponential at the right rate whatever
+schedule produced it. The level it decays from is not: for a uniform schedule of N
+slices over horizon T the amplitude is the kernel's transient impact times
+`(1/N)(1 - e^-rhoT)/(1 - e^-rhoT/N)`, which is 0.589 over two half-lives at eight
+slices and 0.541 in the continuous limit. Reading a kernel off a worked order's
+mark-out therefore understates its transient part by about 40%.
+
+Being a decreasing kernel is not sufficient for admissibility, which is the trap
+here. A kernel that falls almost flat and then drops off a shoulder is
+non-negative, bounded and strictly decreasing at every lag, and admits a round
+trip costing -2.35 over twelve slices whose largest is one share. Complete
+monotonicity is the property that works. The guard's threshold is relative,
+because the cost matrix restricted to zero-sum directions is singular by
+construction and on a power-law kernel its smallest eigenvalue comes out negative
+at 1e-16 of the scale — a test against zero would reject an admissible model.
+
+Five defects, four of them in the tests. The gap between a power law and a matched
+exponential was asserted to shrink throughout and in fact peaks, because both are
+heading to zero; the scheduling peak was read off every grid at one grid's peak;
+the round trip's cost was quoted at unit norm while the function reports it at
+largest-slice-one; and a zip against a shifted copy was written without accounting
+for the shift. The one in the code: `impact_path` returned an entry past the last
+slice, called it the impact at completion, and had it one interval late —
+understating completion impact by exactly one period of decay, 16% on the grid it
+was checked on, which is too small to look like a bug and too large to ignore.

@@ -421,6 +421,140 @@ cost against arrival so that delay does not leak into the impact coefficients.
 Its time unit is a required argument: a rate coefficient fitted per hour and
 used per day is wrong by a factor of the trading day's length, silently.
 
+## Impact that decays at a rate
+
+`slippage markouts` measures how much of an order's impact came back and over
+what half-life. Nothing else here could produce that curve. The rate models in
+`slippage.impact` charge for the current trading *speed*, so their temporary
+impact is gone the instant the speed is zero, and `gamma` never decays at all. A
+desk that had measured a reverted fraction of 0.6 with a half-life of eleven
+minutes had learned something no scheduler here could use.
+
+`slippage.transient` is the missing middle. Impact is a **decay kernel**, or
+propagator: each share pushes the price by `G(0)` and that push decays as
+`G(lag)` while the rest of the order works, towards a permanent floor `G(inf)`.
+The two existing descriptions are its two limits.
+
+```
+$ slippage transient --quantity 100000 --horizon 8 --periods 8 \
+      --gamma 1e-6 --eta 2e-5 --half-life 2.7726
+kernel: ExponentialDecay
+impact per share: 2.1e-05 now, 1e-06 permanent
+period     start         trade     remaining
+     0         0        30,055        69,945
+     1         1         6,648        63,296
+     2         2         6,648        56,648
+     3         3         6,648        50,000
+     4         4         6,648        43,352
+     5         5         6,648        36,704
+     6         6         6,648        30,055
+     7         7        30,055             0
+
+cost 58,463 against 62,512 at a constant rate: 6.477% saved, first slice 2.4x uniform
+```
+
+### The cost is a quadratic form, so nothing here needs an optimiser
+
+Slice `k` pays the impact already in the price from every earlier slice, plus half
+of its own:
+
+```
+cost = sum_k n_k [ sum_{j<k} n_j G(t_k - t_j) + n_k G(0) / 2 ]  =  n' K n / 2
+```
+
+with `K_ij = G(|t_i - t_j|)`. The second form is the first rearranged, and the
+tests check them against each other by walking the price path trade by trade,
+because a rearrangement is the step most likely to be wrong and least likely to
+look it.
+
+Having the cost as a symmetric form makes the cost-minimising schedule a linear
+solve: `n* = X K^-1 1 / (1' K^-1 1)`, at a cost of `X^2 / (2 * 1' K^-1 1)`. No
+starting values, no convergence to report. The shape above — a block, a constant
+rate, a block — is Obizhaeva and Wang's continuous-time result, and **nothing in
+the code imposes it**. It falls out of the solve, which is the most convincing
+form the result can take; an optimiser tuned until it drew the expected picture
+would be evidence of nothing. Compared against SLSQP on the same problem the
+closed form is 0.27% *cheaper* at low resilience, because the optimiser stops
+early.
+
+### A kernel that is not positive definite pays you to trade
+
+If `K` is negative on some zero-sum direction then a round trip — buy some, sell
+the same back — has *negative* impact cost, and an optimiser handed that model
+finds profit in its own market impact. So it is checked rather than documented,
+and `manipulation_round_trip` returns the offending trip rather than a boolean:
+"your kernel is inadmissible" is much less use than the twelve numbers that break
+it.
+
+**Being a decreasing function of lag is not sufficient**, which is the part worth
+knowing. A kernel that falls almost flat and then drops off a shoulder is
+non-negative, bounded and strictly decreasing at every lag — all checked in the
+test rather than asserted — and it still admits a round trip costing `-2.35` over
+twelve slices whose largest is one share. Complete monotonicity is the property
+that works, because it makes the kernel a mixture of exponentials and every
+exponential is positive definite on its own. Both offered kernels have it.
+
+The threshold for that check is relative, and has to be. The cost matrix
+restricted to zero-sum directions is singular by construction, so its smallest
+eigenvalue is zero up to rounding — and on a perfectly good power-law kernel that
+rounding comes out *negative*, at around `-1e-16` of the matrix scale. A test
+against zero would report a free lunch of 1e-16 on an admissible model.
+
+### The gain from scheduling well is not monotone in resilience
+
+Both limits give nothing, for different reasons. Infinitely resilient, the matrix
+is diagonal, the cost is `sum n_k^2` and a constant rate is already optimal. Not
+resilient at all, the matrix is constant, the cost is `X^2 G(0) / 2` and *every*
+schedule ties. So the saving peaks in between:
+
+| slices | peak at `resilience x horizon` | saving |
+|---|---|---|
+| 4 | 1.62 | 3.57% |
+| 8 | 2.00 | 7.04% |
+| 16 | 2.29 | 9.38% |
+| 32 | 2.47 | 10.73% |
+| 64 | 2.57 | 11.46% |
+
+The saving is a function of `resilience x horizon` alone — eight slices over eight
+minutes and eight over thirty give identical numbers once that product matches, so
+the spacing is not a second parameter. What it does depend on is how finely the
+horizon is cut, because the solution wants two instantaneous blocks and a finer
+grid approximates them better. There is therefore no single peak to quote without
+saying how many slices it is over, which a first version of this table did by
+reading every grid at one grid's peak.
+
+### A mark-out recovers the resilience exactly and the amplitude not at all
+
+`residual_impact` is the curve the model predicts after the order finishes. For an
+exponential kernel the horizon appears in every term as the same factor, so it
+comes outside the sum and the curve is exactly `permanent * X + A exp(-rho h)`
+whatever schedule produced it — checked to twelve decimal places. The decay
+*rate* is a property of the kernel alone.
+
+The amplitude is not. A mark-out is taken from the moment the order completed, by
+which time everything except the last slice has been decaying. For a uniform
+schedule of `N` slices over a horizon `T` the measured amplitude is the kernel's
+transient impact times
+
+```
+(1/N) (1 - exp(-rho T)) / (1 - exp(-rho T/N))
+```
+
+which over two half-lives is 0.589 at eight slices and 0.541 as trading becomes
+continuous. So `ExponentialDecay.from_measured_decay` reads the transient part
+back about **40% low** on a worked order, and is exact only for a single block.
+It says so, because the alternative is being quietly wrong in the direction that
+makes trading look cheaper than it is.
+
+### One function was wrong in a way that read as right
+
+`impact_path` used to return one entry past the last slice and call it the impact
+at completion. It was one interval late, understating the impact at completion by
+exactly one period of decay — 16% on the grid it was checked on, which is far too
+small to look like a bug and far too large to ignore. It now stops at the last
+slice, and what happens afterwards takes the horizons it is asked about rather
+than implying one.
+
 ## Optimal execution
 
 `optimal_trajectory` solves the Almgren–Chriss problem: execute `X` shares over
