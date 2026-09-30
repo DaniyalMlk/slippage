@@ -523,3 +523,69 @@ def test_a_holdings_file_missing_a_column_says_which(
     )
     assert code != 0
     assert "missing eta, gamma" in capsys.readouterr().err
+
+
+# -- transient ---------------------------------------------------------------
+
+TRANSIENT_ARGS = [
+    "transient",
+    "--quantity", "100000",
+    "--horizon", "8",
+    "--periods", "8",
+    "--gamma", "1e-6",
+    "--eta", "2e-5",
+]  # fmt: skip
+
+
+def test_the_transient_command_prints_the_block_rate_block_shape() -> None:
+    code, text = run(*TRANSIENT_ARGS, "--half-life", "2.7726")
+    assert code == 0
+    assert "ExponentialDecay" in text
+    assert "% saved" in text
+    assert "impact left after the order" in text
+
+
+def test_the_transient_command_reports_a_saving_and_the_impact_left_behind() -> None:
+    code, text = run(*TRANSIENT_ARGS, "--half-life", "2.7726", "--json")
+    assert code == 0
+    payload = json.loads(text)
+    trades = payload["trades"]
+    assert len(trades) == 8
+    assert sum(trades) == pytest.approx(100_000.0, rel=1e-9)
+    # The two end blocks are equal and the middle is flat, which is the whole
+    # shape the kernel produces and nothing in the command imposes.
+    assert trades[0] == pytest.approx(trades[-1], rel=1e-9)
+    assert trades[1:-1] == pytest.approx([trades[1]] * 6, rel=1e-9)
+    assert payload["front_load"] > 2.0
+    assert 0.0 < payload["saving"] < 0.1
+    assert payload["cost"] < payload["uniform_cost"]
+    # The impact left behind decays rather than staying put or vanishing.
+    residual = [one["impact"] for one in payload["residual_impact"]]
+    assert residual == sorted(residual, reverse=True)
+    assert residual[-1] > payload["permanent_impact_per_share"] * 100_000.0
+
+
+def test_the_half_life_and_the_resilience_are_the_same_parameter() -> None:
+    by_life = json.loads(run(*TRANSIENT_ARGS, "--half-life", "2.7726", "--json")[1])
+    by_rate = json.loads(run(*TRANSIENT_ARGS, "--resilience", "0.25", "--json")[1])
+    assert by_life["trades"] == pytest.approx(by_rate["trades"], rel=1e-4)
+    assert by_life["cost"] == pytest.approx(by_rate["cost"], rel=1e-4)
+
+
+def test_giving_both_decay_arguments_is_refused_rather_than_one_winning(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main([*TRANSIENT_ARGS, "--half-life", "2.0", "--resilience", "0.3"]) == 2
+    assert "not both" in capsys.readouterr().err
+
+
+def test_giving_neither_decay_argument_is_refused() -> None:
+    assert main(TRANSIENT_ARGS) == 2
+
+
+def test_a_power_law_kernel_is_available_and_needs_a_scale() -> None:
+    code, text = run(*TRANSIENT_ARGS, "--exponent", "0.6", "--half-life", "2.0", "--json")
+    assert code == 0
+    assert json.loads(text)["kernel"] == "PowerLawDecay"
+    # A power law has no resilience rate to be given instead of a scale.
+    assert main([*TRANSIENT_ARGS, "--exponent", "0.6", "--resilience", "0.3"]) == 2
