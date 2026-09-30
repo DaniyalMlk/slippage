@@ -41,8 +41,9 @@ than a boolean, because "your kernel is inadmissible" is much less use than the
 twelve numbers that break it.
 
 Being a decreasing function of lag is **not** sufficient. A kernel that falls
-slowly and then drops off a shoulder is strictly decreasing and still admits a
-round trip costing ``-0.358`` per unit of the kernel's own scale. Complete
+slowly and then drops off a shoulder is strictly decreasing at every lag and
+still admits a round trip whose cost is ``-2.35``: twelve slices, the largest of
+them one share, in a kernel whose instantaneous impact is one. Complete
 monotonicity is the property that works, because it makes the kernel a mixture of
 exponentials and every exponential is positive definite on its own.
 
