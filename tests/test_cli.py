@@ -589,3 +589,101 @@ def test_a_power_law_kernel_is_available_and_needs_a_scale() -> None:
     assert json.loads(text)["kernel"] == "PowerLawDecay"
     # A power law has no resilience rate to be given instead of a scale.
     assert main([*TRANSIENT_ARGS, "--exponent", "0.6", "--resilience", "0.3"]) == 2
+
+
+# -- adaptive -----------------------------------------------------------------
+
+ADAPTIVE_ARGS = [
+    "adaptive",
+    "--quantity", "1000000",
+    "--horizon", "1",
+    "--periods", "20",
+    "--gamma", "2.5e-7",
+    "--eta", "2.5e-6",
+    "--illiquid-eta", "1.25e-5",
+    "--volatility", "0.3",
+    "--risk-aversion", "2e-6",
+]  # fmt: skip
+
+
+def test_adaptive_reports_the_saving_and_the_policy_table() -> None:
+    code, text = run(*ADAPTIVE_ARGS, "--persistence", "0.8")
+    assert code == 0
+    assert "starting regime: liquid" in text
+    assert "24.028% of the static objective" in text
+    # Twenty periods plus a header, and the last row trades everything.
+    rows = [line for line in text.splitlines() if line.strip()[:1].isdigit()]
+    assert len(rows) == 20
+    assert rows[-1].split()[1:4] == ["1.000000", "1.000000", "1.000000"]
+
+
+def test_adaptive_in_json_carries_the_whole_policy() -> None:
+    code, text = run(*ADAPTIVE_ARGS, "--persistence", "0.8", "--json")
+    assert code == 0
+    payload = json.loads(text)
+    assert payload["start"] == "liquid"
+    assert payload["saved_fraction"] == pytest.approx(0.2403, abs=5e-4)
+    assert payload["adaptive_objective"] < payload["static_objective"]
+    assert len(payload["periods"]) == 20
+    assert payload["periods"][0]["liquid_fraction"] < payload["periods"][0]["static_fraction"]
+    assert payload["periods"][10]["liquid_fraction"] > payload["periods"][10]["static_fraction"]
+    assert payload["static_expected_impact"] > 0.0
+    assert payload["static_expected_risk"] > 0.0
+    assert "simulated" not in payload
+
+
+def test_adaptive_simulates_the_policy_when_asked() -> None:
+    code, text = run(
+        *ADAPTIVE_ARGS, "--persistence", "0.8", "--draws", "500", "--seed", "11", "--json"
+    )
+    assert code == 0
+    simulated = json.loads(text)["simulated"]
+    assert simulated["draws"] == 500
+    assert simulated["standard_error"] > 0.0
+    assert simulated["covers_the_recursion"] is True
+
+
+@pytest.mark.parametrize("persistence", ["0.0", "1.0"])
+def test_adaptive_reports_nothing_to_gain_on_a_predictable_chain(persistence: str) -> None:
+    code, text = run(*ADAPTIVE_ARGS, "--persistence", persistence, "--json")
+    assert code == 0
+    assert json.loads(text)["saved_fraction"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_adaptive_starting_illiquid_gains_more_at_four_fifths() -> None:
+    _, liquid = run(*ADAPTIVE_ARGS, "--persistence", "0.8", "--start", "0", "--json")
+    _, illiquid = run(*ADAPTIVE_ARGS, "--persistence", "0.8", "--start", "1", "--json")
+    assert json.loads(illiquid)["start"] == "illiquid"
+    assert json.loads(illiquid)["saved_fraction"] > json.loads(liquid)["saved_fraction"]
+
+
+def test_adaptive_takes_a_separate_volatility_for_the_illiquid_regime() -> None:
+    code, text = run(
+        *ADAPTIVE_ARGS, "--persistence", "0.8", "--illiquid-volatility", "0.9", "--json"
+    )
+    assert code == 0
+    assert json.loads(text)["saved_fraction"] > 0.0
+
+
+def test_adaptive_refuses_a_persistence_that_is_not_a_probability() -> None:
+    assert main([*ADAPTIVE_ARGS, "--persistence", "1.4"]) == 2
+
+
+def test_adaptive_refuses_a_regime_whose_permanent_impact_dominates() -> None:
+    """A gamma large enough that one period of it outruns the concession.
+
+    Refused per regime rather than on average: the policy can be routed through
+    any state, so a chain is admissible only if every state in it is.
+    """
+    heavy = [
+        "adaptive",
+        "--quantity", "1000000",
+        "--horizon", "1",
+        "--periods", "20",
+        "--gamma", "1e-3",
+        "--eta", "2.5e-6",
+        "--illiquid-eta", "1.25e-5",
+        "--volatility", "0.3",
+        "--persistence", "0.8",
+    ]  # fmt: skip
+    assert main(heavy) == 2

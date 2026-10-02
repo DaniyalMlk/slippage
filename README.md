@@ -597,6 +597,109 @@ impact; with one-day intervals the example gives −0.485, −0.970 and +0.511,
 and the tests check both the analytic values against finite differences and
 their convergence to the limits as the interval shrinks.
 
+## Adapting to the liquidity you find
+
+Every schedule above is decided before the first share trades, and under the
+assumptions Almgren and Chriss make that is not a shortcut — it is the answer.
+Impact and volatility are constant and known, nothing is revealed that the plan
+should depend on, and a trader who waits to see what happens cannot beat one who
+commits.
+
+So the question is not whether a schedule can adapt but what has to be true
+before adapting is worth anything. `slippage.adaptive` puts liquidity on a
+two-state Markov chain the trader observes *before* trading into each period,
+and prices the option to react against the best schedule that still has to be
+fixed in advance.
+
+```
+$ slippage adaptive --quantity 1000000 --horizon 1 --periods 20 \
+      --gamma 2.5e-7 --eta 2.5e-6 --illiquid-eta 1.25e-5 \
+      --volatility 0.3 --persistence 0.8 --risk-aversion 2e-6 --draws 4000
+starting regime: liquid
+objective: 4.99602e+06 adapting against 6.57616e+06 fixed in advance
+saving: 1.58013e+06 (24.028% of the static objective)
+period      static      liquid    illiquid   liquid/static
+     0    0.129346    0.097665    0.024117           0.755
+     1    0.082343    0.102862    0.025714           1.249
+     2    0.070741    0.108619    0.027525           1.535
+   ...
+    18    0.500022    0.643136    0.456509           1.286
+    19    1.000000    1.000000    1.000000           1.000
+simulated over 4000 paths: 4.98383e+06 +/- 2.61e+04, 0.47 standard errors from the recursion
+```
+
+### No grid, and no approximation
+
+The per-period cost is quadratic in the trade and the risk penalty is quadratic
+in the inventory, and both are homogeneous of degree two, so the value function
+is `a_k(s) x²` for one number per regime per period. Writing `A = η̃(s)/τ` for
+the cost of trading and `B = λσ(s)²τ + E_s[a_{k+1}]` for the cost of still
+holding, each step is
+
+    minimise A n² + B (x − n)²   ⇒   n* = x B/(A + B),   value = x² AB/(A + B)
+
+and the recursion runs on `1/a`, which is where the terminal constraint lands:
+`a_N = ∞` is `1/a_N = 0`, so the last period trades everything without that
+being a special case. The trade fraction `B/(A + B)` does not depend on the
+inventory, which is why the policy prints as a table.
+
+With one regime it has to be Almgren-Chriss, and it is: holdings agree with
+`optimal_trajectory` to **2.3e-16** of the order size and the objective to
+**1.7e-16**. That is the test the rest of this rests on.
+
+### The objective changes, and it has to
+
+What is minimised here is `E[cost] + λ E[Σ σ²τx²]`, not `E[cost] + λ Var[cost]`.
+For a deterministic schedule those are the same number — the variance of the
+total cost *is* that sum — which is why the agreement above is exact. For an
+adaptive schedule they are not: the inventory becomes random and the variance of
+the total picks up a term the sum of conditional variances does not have. A
+variance of a total is not a sum of per-period pieces, so no dynamic program
+optimises it, and the running penalty is the time-consistent substitute.
+
+### What it is worth, and three guesses it reversed
+
+The baseline is the best *deterministic* schedule facing the same chain — not
+either regime's own schedule. A static trader who knows the chain's law uses the
+expected coefficients period by period, and those drift as the chain mixes:
+starting liquid it front-loads 129,346 shares into the first of twenty periods
+against about 51,000 for either pure schedule, both of which are nearly uniform.
+Measuring against a pure schedule would credit the policy with a gain any static
+trader could have taken.
+
+**Both ends of the persistence range are worth nothing, for the same reason.** At
+a persistence of 1 the chain never moves; at 0 it strictly alternates. Both are
+perfectly predictable and both come out at zero to 4e-16. Variability is not
+uncertainty. And the peak is not in the middle: scanning at 0.001 it is 37.30%
+at **0.182**, well onto the mean-reverting side, and that location holds between
+0.171 and 0.187 across ten, twenty and fifty periods and across impact ratios of
+two, five and ten.
+
+**Adapting is worth most to a trader who does not care about risk** — 37.64% at
+zero risk aversion, falling monotonically to 12.91% at 1e-03 — because a risk
+penalty is charged on inventory whatever the regime, so the more of the objective
+it accounts for the less of it the regime can move. Adaptivity is a cost device
+here, not a risk device.
+
+**It is liquidity worth adapting to, not volatility.** Two regimes differing only
+in volatility by a factor of five are worth **0.115%**. Two differing only in
+impact by the same factor are worth **24.03%** — two hundred and nine times as
+much.
+
+**And the saving comes from waiting rather than hurrying.** The middle periods
+look as expected: 1.906 times the static fraction when liquid, 0.589 when
+illiquid. But the *first* period trades 0.755 of the static fraction even in the
+liquid state, because the static schedule is front-loading into liquidity it is
+forecasting and the adaptive one can wait for liquidity it will observe. Which
+is why the illiquid start gains more at a persistence of 0.8 — 24.64% against
+24.03% — with the ordering reversing by 0.9, where the liquid start gains 15.06%
+against 11.99%.
+
+Fewer than three periods cannot gain anything, and that is provable rather than
+small: the first regime is known to the static schedule too and the last period
+has no decision in it, so the saving is exactly `0.0`. The first non-zero gain is
+1.73% at three periods.
+
 ## Liquidating a basket
 
 `optimal_trajectory` solves one name. Almost nothing is executed one name at a

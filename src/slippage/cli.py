@@ -33,6 +33,15 @@ from typing import TextIO
 import numpy as np
 
 from . import __version__
+from .adaptive import (
+    AdaptiveProblem,
+    LiquidityRegime,
+    RegimeChain,
+    adaptivity_gain,
+    simulate_policy,
+    solve_adaptive,
+    static_schedule,
+)
 from .basket import (
     BasketProblem,
     basket_trajectory,
@@ -249,6 +258,84 @@ def build_parser() -> argparse.ArgumentParser:
         help="use a power-law kernel with this exponent, scaled by --half-life",
     )
     transient.add_argument("--json", action="store_true")
+
+    adaptive = sub.add_parser(
+        "adaptive",
+        help="adapt the schedule to the liquidity regime, and price the option",
+        description=(
+            "Every other schedule here is fixed before the first share trades, "
+            "which is right when impact and volatility are constant: nothing is "
+            "revealed that the plan should depend on. This one lets liquidity "
+            "switch between two regimes on a Markov chain the trader observes "
+            "before trading into, and reports what reacting to it is worth "
+            "against the best schedule that still has to be fixed in advance. "
+            "The comparison is not against either regime's own schedule: a "
+            "static trader who knows the chain's law uses the expected "
+            "coefficients period by period, and beating that is the only gain "
+            "adapting can claim."
+        ),
+    )
+    adaptive.add_argument("--quantity", type=float, required=True)
+    adaptive.add_argument("--horizon", type=float, required=True)
+    adaptive.add_argument("--periods", type=int, required=True)
+    adaptive.add_argument(
+        "--gamma", type=float, default=0.0, help="permanent impact, price per share"
+    )
+    adaptive.add_argument(
+        "--eta",
+        type=float,
+        required=True,
+        help="temporary impact of the liquid regime, price per share per unit time",
+    )
+    adaptive.add_argument(
+        "--illiquid-eta",
+        dest="illiquid_eta",
+        type=float,
+        required=True,
+        help="temporary impact of the illiquid regime, in the same units",
+    )
+    adaptive.add_argument("--volatility", type=float, required=True, help="of the liquid regime")
+    adaptive.add_argument(
+        "--illiquid-volatility",
+        dest="illiquid_volatility",
+        type=float,
+        default=None,
+        help="of the illiquid regime; defaults to the liquid one's",
+    )
+    adaptive.add_argument(
+        "--persistence",
+        type=float,
+        required=True,
+        help=(
+            "probability a regime repeats next period. Worth nothing to adapt to "
+            "at either one or zero: both are perfectly predictable chains"
+        ),
+    )
+    adaptive.add_argument(
+        "--risk-aversion",
+        dest="risk_aversion",
+        type=float,
+        default=0.0,
+        help="lambda on the running variance penalty",
+    )
+    adaptive.add_argument(
+        "--start",
+        type=int,
+        default=0,
+        choices=(0, 1),
+        help="regime the order starts in: 0 liquid, 1 illiquid",
+    )
+    adaptive.add_argument(
+        "--draws",
+        type=int,
+        default=0,
+        help=(
+            "simulate this many regime paths and report the realised objective, "
+            "which shares no arithmetic with the recursion"
+        ),
+    )
+    adaptive.add_argument("--seed", type=int, default=0)
+    adaptive.add_argument("--json", action="store_true")
 
     sample = sub.add_parser("sample-data", help="write a synthetic book to CSV")
     sample.add_argument("--out", type=Path, required=True)
@@ -808,6 +895,127 @@ def _run_basket(args: argparse.Namespace, out: TextIO) -> None:
         )
 
 
+def _run_adaptive(args: argparse.Namespace, out: TextIO) -> None:
+    """Price the option to react, against the best schedule that cannot.
+
+    The number to read is the saving, and it is zero at both ends of the
+    persistence range for the same underlying reason: a chain that never moves
+    and a chain that strictly alternates are both perfectly predictable, and a
+    static schedule can use either. Only uncertainty is worth reacting to.
+    """
+    if not 0.0 <= args.persistence <= 1.0:
+        raise SlippageError(f"--persistence is a probability, got {args.persistence!r}")
+    leave = 1.0 - args.persistence
+    liquid = LiquidityRegime(
+        impact=LinearImpact(gamma=args.gamma, eta=args.eta),
+        volatility=args.volatility,
+        label="liquid",
+    )
+    illiquid = LiquidityRegime(
+        impact=LinearImpact(gamma=args.gamma, eta=args.illiquid_eta),
+        volatility=(
+            args.volatility if args.illiquid_volatility is None else args.illiquid_volatility
+        ),
+        label="illiquid",
+    )
+    chain = RegimeChain(
+        regimes=(liquid, illiquid),
+        transitions=((args.persistence, leave), (leave, args.persistence)),
+    )
+    problem = AdaptiveProblem(
+        quantity=args.quantity,
+        horizon=args.horizon,
+        periods=args.periods,
+        chain=chain,
+    )
+    policy = solve_adaptive(problem, args.risk_aversion)
+    fixed = static_schedule(problem, args.risk_aversion, args.start)
+    gain = adaptivity_gain(problem, args.risk_aversion, args.start)
+
+    remaining = args.quantity
+    static_fractions = []
+    for size in fixed.trades:
+        static_fractions.append(size / remaining if remaining > 0.0 else 0.0)
+        remaining -= size
+
+    simulated = (
+        simulate_policy(policy, args.start, draws=args.draws, seed=args.seed)
+        if args.draws > 0
+        else None
+    )
+
+    if args.json:
+        payload: dict[str, object] = {
+            "start": chain.regimes[args.start].name,
+            "adaptive_objective": gain.adaptive,
+            "static_objective": gain.static,
+            "saved": gain.saved,
+            "saved_fraction": gain.fraction,
+            "static_expected_impact": fixed.expected_impact,
+            "static_expected_risk": fixed.expected_risk,
+            "periods": [
+                {
+                    "period": index,
+                    "static_fraction": static_fractions[index],
+                    "liquid_fraction": policy.fractions[index][0],
+                    "illiquid_fraction": policy.fractions[index][1],
+                }
+                for index in range(problem.periods)
+            ],
+        }
+        if simulated is not None:
+            payload["simulated"] = {
+                "mean": simulated.mean,
+                "standard_error": simulated.standard_error,
+                "draws": simulated.draws,
+                "covers_the_recursion": simulated.covers(gain.adaptive),
+            }
+        json.dump(payload, out, indent=2)
+        print(file=out)
+        return
+
+    print(f"starting regime: {chain.regimes[args.start].name}", file=out)
+    print(
+        f"objective: {gain.adaptive:.6g} adapting against {gain.static:.6g} fixed in advance",
+        file=out,
+    )
+    print(
+        f"saving: {gain.saved:.6g} ({100.0 * gain.fraction:.3f}% of the static objective)",
+        file=out,
+    )
+    print(
+        f"{'period':>6}{'static':>12}{'liquid':>12}{'illiquid':>12}{'liquid/static':>16}",
+        file=out,
+    )
+    for index in range(problem.periods):
+        reference = static_fractions[index]
+        liquid_fraction, illiquid_fraction = policy.fractions[index]
+        ratio = liquid_fraction / reference if reference > 0.0 else float("nan")
+        print(
+            f"{index:>6}{reference:>12.6f}{liquid_fraction:>12.6f}"
+            f"{illiquid_fraction:>12.6f}{ratio:>16.3f}",
+            file=out,
+        )
+    if simulated is not None:
+        errors = (
+            abs(simulated.mean - gain.adaptive) / simulated.standard_error
+            if simulated.standard_error > 0.0
+            else 0.0
+        )
+        print(
+            f"simulated over {simulated.draws} paths: {simulated.mean:.6g} "
+            f"+/- {simulated.standard_error:.4g}, {errors:.2f} standard errors "
+            f"from the recursion",
+            file=out,
+        )
+    print(
+        "A persistence of one or of zero is worth nothing to adapt to: the first "
+        "never moves and the second strictly alternates, so a schedule fixed in "
+        "advance can use either.",
+        file=out,
+    )
+
+
 def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     stream = sys.stdout if out is None else out
     args = build_parser().parse_args(argv)
@@ -818,6 +1026,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         "frontier": _run_frontier,
         "basket": _run_basket,
         "transient": _run_transient,
+        "adaptive": _run_adaptive,
         "sample-data": _run_sample,
     }
     try:
