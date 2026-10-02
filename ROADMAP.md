@@ -265,3 +265,83 @@ for the shift. The one in the code: `impact_path` returned an entry past the las
 slice, called it the impact at completion, and had it one interval late —
 understating completion impact by exactly one period of decay, 16% on the grid it
 was checked on, which is too small to look like a bug and too large to ignore.
+
+## Phase 13 — Is a schedule worth adapting, and to what?
+
+- [x] A liquidity regime carrying its own impact model and volatility, with a
+      Markov chain over regimes that the trader observes before trading into
+- [x] The optimal adaptive policy by backward induction, exact rather than
+      gridded, because the value function stays quadratic in the remaining
+      inventory — one coefficient per regime per period
+- [x] The terminal liquidation constraint entering as a zero in the reciprocal
+      recursion rather than as a special case in the algebra
+- [x] One regime reproducing `optimal_trajectory`: holdings to 2.3e-16 of the
+      order size, objective to 1.7e-16 relative, at every risk aversion tested
+- [x] The best *deterministic* schedule facing the same chain, as the only
+      honest thing to measure the policy against
+- [x] A Monte Carlo over drawn regime paths, sharing no arithmetic with the
+      recursion, agreeing with it inside its standard error
+- [x] A command-line entry point reporting the saving and the policy table
+      beside the static one
+
+The objective had to change, and that is worth stating rather than hiding. What
+is minimised here is `E[cost] + lambda E[sum sigma^2 tau x^2]`, not `E[cost] +
+lambda Var[cost]`. For a deterministic schedule those are the same number — the
+variance of the total cost *is* that sum — which is why the single-regime
+agreement with the closed form is exact. For an adaptive schedule they are not,
+because the inventory becomes random and the variance of the total picks up a
+term the sum of conditional variances does not have. A variance of a total is
+not a sum of per-period pieces, so no dynamic program optimises it, and the
+running penalty is the time-consistent substitute.
+
+Four measurements, and three of them came out against the guess.
+
+**Both ends of the persistence range are worth nothing, for the same reason.** At
+a persistence of one the chain never moves and the static schedule can use the
+starting regime. At zero it strictly alternates, which is just as predictable.
+Both come out at zero to 4e-16 of the objective. Variability is not uncertainty,
+and only uncertainty is worth reacting to. Nor is the peak in the middle: scanning
+at 0.001 it is 37.30% at **0.182** — well onto the mean-reverting side, where a
+regime says something about the next period and almost nothing about the one
+after. That location holds between 0.171 and 0.187 across ten, twenty and fifty
+periods and across impact ratios of two, five and ten.
+
+**Adapting is worth most to a trader who does not care about risk**, which is the
+reverse of the intuition that adaptivity is a risk-management device. The gain
+runs 37.64% at zero risk aversion, 37.30% at 2e-06, 26.92% at 1e-04 and 12.91% at
+1e-03, monotonically down, because a risk penalty is charged on inventory
+whatever the regime and the more of the objective it accounts for the less of it
+the regime can move.
+
+**It is liquidity worth adapting to and not volatility.** Two regimes differing
+only in volatility, by a factor of five, at a persistence of 0.8, are worth
+0.115%. Two differing only in impact by that same factor are worth 24.03% — two
+hundred and nine times as much. Reacting to a volatility spike is close to
+worthless here; reacting to a liquidity one is the whole effect.
+
+**And the saving comes from waiting rather than from hurrying.** At the tenth of
+twenty periods the policy trades 1.906 times the static fraction when liquid and
+0.589 times it when illiquid, which is the expected shape. But in the *first*
+period it trades 0.755 times the static fraction even in the liquid state,
+because a static schedule starting liquid front-loads into the cheap trading it
+forecasts and an adaptive one does not have to. Which is also why the gain is
+larger from the illiquid start at a persistence of 0.8 — 24.64% against 24.03% —
+with the ordering reversing by 0.9, where the liquid start gains 15.06% against
+11.99%.
+
+Fewer than three periods cannot gain anything, and that is provable rather than
+small: the first period's regime is known to the static schedule too, and the
+last period has no decision in it, so a two-period problem reveals nothing before
+its only choice. The saving comes back as exactly `0.0`; the first non-zero one is
+1.73% at three periods.
+
+Three defects, all in what was asserted. The static schedule facing the chain
+was asserted to lie between the two pure schedules and lies outside both —
+129,346 shares in the first of twenty periods against about 51,000 for either
+pure schedule — because theirs have constant coefficients and are nearly uniform
+while this one is steeply front-loaded from a liquid start and back-loaded from
+an illiquid one. The gain's denominator was guarded against being zero and tested
+at a quantity of 1e-100, where it is 1e-230 and divides perfectly well; the only
+route to zero is underflow at around 1e-150, which is what the test now uses. And
+`covers` read an infinite standard error as agreement, so a single draw — the
+weakest evidence available — was reported as the strongest.
