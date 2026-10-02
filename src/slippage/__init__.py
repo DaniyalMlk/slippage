@@ -77,10 +77,12 @@ from .placement import (
     Moments,
     Outcome,
     Placement,
+    Simulated,
     evaluate,
     frontier,
     moments,
     monitoring_shift,
+    simulate_placement,
 )
 from .report import (
     Aggregate,
@@ -203,6 +205,7 @@ __all__ = [
     "Score",
     "ShortfallBreakdown",
     "Side",
+    "Simulated",
     "SimulatedValue",
     "SlippageError",
     "SquareRootLaw",
@@ -267,6 +270,7 @@ __all__ = [
     "shortfall_from_market",
     "shortfall_from_totals",
     "simulate_costs",
+    "simulate_placement",
     "simulate_policy",
     "simulate_prices",
     "solve_adaptive",

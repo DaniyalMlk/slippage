@@ -49,9 +49,10 @@ that referenced the distance cancelled against the adverse selection.
 order has a bimodal outcome and a crossed one does not, so one might expect
 resting deeper to buy a lower mean at the price of a higher variance. It does
 not buy a lower mean. Over distances from a hundredth of a standard deviation
-to four, the expected cost rises from -0.94 to +6.00 basis points while the
-standard deviation rises from 16 to 1260 basis points: both monotone, both in
-the same direction. There is no mean-variance frontier here, and the
+to four, with a five basis point half spread over a day at 20% volatility, the
+expected cost rises from -0.94 to +6.00 basis points while the standard
+deviation rises from 16.4 to 126.0: both monotone, both in the same
+direction. There is no mean-variance frontier here, and the
 consequence is unambiguous — rest at the tightest price the book allows, which
 is the best bid, and the distance is then the half spread rather than a choice.
 :func:`frontier` exists to make that visible rather than to be optimised over.
@@ -67,16 +68,25 @@ grows linearly in it while the cost at the touch grows quadratically.
 **Simulating a barrier is biased, and by a knowable amount.** A simulated path
 is checked at its own time steps and misses the excursions between them, so
 the fill probability comes out *low*. Measured against the exact answer at a
-distance of 0.05 over a year at 20% volatility: 3.45% low at 250 steps, 1.51%
-at 1,000, 0.63% at 4,000 and 0.25% at 16,000 — halving as the step count
-quadruples, which is the square-root rate. :func:`monitoring_shift` moves the
-barrier by ``0.5826 sigma sqrt(T/steps)``, the Broadie-Glasserman-Kou
-continuity correction, and the formula then matches the *discrete* simulation
-to within 0.20% to 0.28% at every one of those step counts — a reduction of
-between twelve and seventeen times. Any test that compares this module against
-a simulation has to allow for that bias or correct it; asserting agreement to
-a tenth of a per cent at a thousand steps would be asserting that the
-correction does not exist.
+distance of 0.05 over a year at 20% volatility, over 200,000 paths: 3.60% low
+at 250 steps, 1.89% at 1,000, 0.91% at 4,000 and 0.45% at 16,000 — the
+successive ratios are 1.91, 2.08 and 2.00, so it halves as the step count
+quadruples, which is the square-root rate.
+
+:func:`monitoring_shift` moves the barrier by ``0.5826 sigma sqrt(T/steps)``,
+the Broadie-Glasserman-Kou continuity correction, and the formula then matches
+the *discrete* simulation to -0.06%, +0.08%, +0.01% and +0.007% at those four
+step counts: a reduction of between twenty-three and seventy-eight times, and
+small enough to be sampling error at 200,000 paths.
+
+**The correction fixes the probability and not the mean cost.** That was worth
+finding out rather than assuming, because the mean is built out of the same
+barrier. Shifting it leaves the simulated mean cost 21.7, 11.9, 6.1 and 1.9
+standard errors away at the same four step counts — the gap shrinks with the
+step count and the shift does nothing to it, because the bias in the mean is in
+``E[X_T 1{fill}]`` rather than in the probability, and moving the barrier
+changes that term the wrong way. A test on the probability can use a modest
+step count and the correction; a test on the mean needs the steps.
 """
 
 from __future__ import annotations
@@ -85,6 +95,9 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+import numpy as np
+from numpy.typing import NDArray
+
 from .exceptions import ValidationError
 
 __all__ = [
@@ -92,11 +105,16 @@ __all__ = [
     "Moments",
     "Outcome",
     "Placement",
+    "Simulated",
     "evaluate",
     "frontier",
     "moments",
     "monitoring_shift",
+    "simulate_placement",
 ]
+
+# ``simulate`` on its own would shadow :mod:`slippage.simulate` at package
+# level, where both are re-exported. The suffix is not decoration.
 
 #: ``-zeta(1/2) / sqrt(2 pi)``: the constant in the Broadie-Glasserman-Kou
 #: continuity correction, which is the amount a discretely monitored barrier
@@ -411,3 +429,88 @@ def monitoring_shift(volatility: float, horizon: float, steps: int) -> float:
     if steps < 1:
         raise ValidationError(f"steps must be at least one, got {steps!r}")
     return MONITORING_BETA * volatility * math.sqrt(horizon / steps)
+
+
+@dataclass(frozen=True)
+class Simulated:
+    """The same quantities from paths, with the standard errors of each.
+
+    Attributes:
+        fill_probability: Fraction of paths that touched the limit.
+        expected_cost: Mean realised cost against the arrival mid.
+        cost_deviation: Sample standard deviation of it.
+        fill_error: Standard error of the fill probability.
+        cost_error: Standard error of the mean cost.
+        paths: How many paths were drawn.
+        steps: How many times each path was checked against the limit.
+    """
+
+    fill_probability: float
+    expected_cost: float
+    cost_deviation: float
+    fill_error: float
+    cost_error: float
+    paths: int
+    steps: int
+
+
+def simulate_placement(
+    placement: Placement,
+    *,
+    paths: int = 100_000,
+    steps: int = 1_000,
+    rng: np.random.Generator | None = None,
+) -> Simulated:
+    """Draw paths of the mid and resolve the order on each.
+
+    The point of this function is to check the closed forms, so it shares no
+    algebra with them: it walks a Brownian path, records whether the running
+    minimum ever reached the limit, and settles the order accordingly.
+
+    **It is biased, and knowably.** A path checked only at its own ``steps``
+    observations misses the excursions between them, so the fill probability
+    comes out low — 3.45% low at 250 steps and 0.25% low at 16,000, halving as
+    the step count quadruples. :func:`monitoring_shift` says how far to move
+    the barrier to make the continuous formula agree with this instead, and a
+    comparison that ignores the bias will fail at any step count a test can
+    afford.
+
+    Args:
+        placement: The order and its market.
+        paths: Number of paths. At least one.
+        steps: Observations per path. At least one.
+        rng: Generator to draw from. A fresh default one when omitted.
+
+    Returns:
+        A :class:`Simulated`.
+
+    Raises:
+        ValidationError: If ``paths`` or ``steps`` is below one.
+    """
+    if paths < 1:
+        raise ValidationError(f"paths must be at least one, got {paths!r}")
+    if steps < 1:
+        raise ValidationError(f"steps must be at least one, got {steps!r}")
+    generator = np.random.default_rng() if rng is None else rng
+    step = placement.horizon / steps
+    deviation = placement.volatility * math.sqrt(step)
+    mid: NDArray[np.float64] = np.zeros(paths, dtype=np.float64)
+    low: NDArray[np.float64] = np.zeros(paths, dtype=np.float64)
+    for _ in range(steps):
+        mid += placement.drift * step + deviation * generator.standard_normal(paths)
+        np.minimum(low, mid, out=low)
+    touched = low <= -placement.distance
+    crossing = placement.half_spread + placement.taker_fee
+    costs = np.where(touched, -placement.distance - placement.maker_rebate, mid + crossing)
+    filled = float(touched.mean())
+    mean = float(costs.mean())
+    spread = float(costs.std(ddof=1)) if paths > 1 else 0.0
+    return Simulated(
+        fill_probability=filled,
+        expected_cost=mean,
+        cost_deviation=spread,
+        fill_error=math.sqrt(max(filled * (1.0 - filled), 0.0) / paths),
+        cost_error=spread / math.sqrt(paths),
+        paths=paths,
+        steps=steps,
+    )
