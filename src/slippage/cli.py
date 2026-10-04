@@ -9,6 +9,8 @@ Four subcommands:
     without constraints, the dynamic programme otherwise.
 ``frontier``
     Expected cost against risk across a range of risk aversions.
+``placement``
+    Rest a limit order or cross the spread, priced.
 ``sample-data``
     Write a synthetic book to CSV, to try ``tca`` without real data.
 
@@ -52,6 +54,13 @@ from .exceptions import SlippageError, ValidationError
 from .execution import ExecutionProblem, efficient_frontier, optimal_trajectory
 from .impact import ImpactModel, LinearImpact, PowerLawImpact
 from .io import load_bars, load_orders, write_bars, write_orders
+from .placement import (
+    Outcome,
+    Placement,
+    evaluate,
+    monitoring_shift,
+    simulate_placement,
+)
 from .report import COMPONENTS, TcaReport, build_report
 from .reversion import DEFAULT_HORIZONS, reversion_profile
 from .scheduling import schedule_objective, solve_schedule
@@ -336,6 +345,89 @@ def build_parser() -> argparse.ArgumentParser:
     )
     adaptive.add_argument("--seed", type=int, default=0)
     adaptive.add_argument("--json", action="store_true")
+
+    placement = sub.add_parser(
+        "placement",
+        help="rest a limit order or cross the spread, priced",
+        description=(
+            "Prices the decision to rest a buy limit order below the mid "
+            "against crossing immediately, under a Brownian mid with a drift. "
+            "Three results are worth reading before the price. The fill "
+            "probability is a running-minimum probability, which is exactly "
+            "twice the chance of merely ending below the limit. Conditional on "
+            "filling, the expected mid at the horizon is exactly the limit "
+            "price, so the adverse selection cancels the whole apparent "
+            "saving. And the expected cost therefore depends on the distance "
+            "only through the fill probability, with the standard deviation "
+            "rising in the same direction -- so there is no frontier here, and "
+            "the table printed by --sweep is there to show that rather than to "
+            "be optimised over."
+        ),
+    )
+    placement.add_argument(
+        "--distance",
+        type=float,
+        required=True,
+        help="how far below the arrival mid the order rests, in price units",
+    )
+    placement.add_argument(
+        "--horizon",
+        type=float,
+        required=True,
+        help="how long it rests before being crossed, in the volatility's time unit",
+    )
+    placement.add_argument(
+        "--volatility",
+        type=float,
+        required=True,
+        help="of the mid, in price units per root time unit",
+    )
+    placement.add_argument(
+        "--drift",
+        type=float,
+        default=0.0,
+        help="of the mid, per time unit. Positive runs away from a buyer",
+    )
+    placement.add_argument(
+        "--half-spread",
+        dest="half_spread",
+        type=float,
+        default=0.0,
+        help="paid when the order has to cross",
+    )
+    placement.add_argument(
+        "--taker-fee", dest="taker_fee", type=float, default=0.0, help="paid on crossing"
+    )
+    placement.add_argument(
+        "--maker-rebate",
+        dest="maker_rebate",
+        type=float,
+        default=0.0,
+        help="earned when the resting order fills",
+    )
+    placement.add_argument(
+        "--sweep",
+        type=float,
+        nargs="+",
+        default=None,
+        metavar="SD",
+        help="also evaluate these distances, in standard deviations of the mid",
+    )
+    placement.add_argument(
+        "--draws",
+        type=int,
+        default=0,
+        help=(
+            "simulate this many paths and report the fill frequency, which is "
+            "biased low by discrete monitoring and is reported beside the "
+            "continuity-corrected formula for that reason"
+        ),
+    )
+    placement.add_argument(
+        "--steps", type=int, default=1000, help="observations per simulated path"
+    )
+    placement.add_argument("--seed", type=int, default=0)
+    placement.add_argument("--json", action="store_true")
 
     sample = sub.add_parser("sample-data", help="write a synthetic book to CSV")
     sample.add_argument("--out", type=Path, required=True)
@@ -1016,6 +1108,143 @@ def _run_adaptive(args: argparse.Namespace, out: TextIO) -> None:
     )
 
 
+def _run_placement(args: argparse.Namespace, out: TextIO) -> None:
+    """Price resting against crossing, and show why there is nothing to optimise.
+
+    The table under ``--sweep`` is the point of the command. Both the expected
+    cost and its standard deviation rise with the distance, so a reader looking
+    for the distance that trades one off against the other will not find it:
+    the answer is always the tightest price the book allows. What changes that
+    is the drift, and the same table at a non-zero ``--drift`` shows by how
+    much.
+    """
+    resting = Placement(
+        distance=args.distance,
+        horizon=args.horizon,
+        volatility=args.volatility,
+        drift=args.drift,
+        half_spread=args.half_spread,
+        taker_fee=args.taker_fee,
+        maker_rebate=args.maker_rebate,
+    )
+    outcome = evaluate(resting)
+    deviation = resting.deviation
+    terminal = 0.5 * math.erfc(resting.standardised_distance / math.sqrt(2.0))
+
+    swept: list[tuple[float, Outcome]] = []
+    if args.sweep:
+        for multiple in args.sweep:
+            if multiple <= 0.0:
+                raise SlippageError(
+                    f"--sweep takes positive multiples of a standard deviation, got {multiple!r}"
+                )
+        swept = [(multiple, evaluate(resting.at(multiple * deviation))) for multiple in args.sweep]
+
+    drawn = None
+    corrected = None
+    if args.draws > 0:
+        drawn = simulate_placement(
+            resting,
+            paths=args.draws,
+            steps=args.steps,
+            rng=np.random.default_rng(args.seed),
+        )
+        shift = monitoring_shift(args.volatility, args.horizon, args.steps)
+        corrected = evaluate(resting.at(args.distance + shift)).fill_probability
+
+    if args.json:
+        payload: dict[str, object] = {
+            "deviation": deviation,
+            "standardised_distance": resting.standardised_distance,
+            "fill_probability": outcome.fill_probability,
+            "terminal_probability": terminal,
+            "running_over_terminal": outcome.fill_probability / terminal,
+            "expected_cost": outcome.expected_cost,
+            "cost_deviation": outcome.cost_deviation,
+            "cost_if_filled": outcome.cost_if_filled,
+            "mid_if_filled": outcome.mid_if_filled,
+            "mid_if_unfilled": outcome.mid_if_unfilled,
+            "chase_cost": outcome.chase_cost,
+            "crossing_cost": outcome.crossing_cost,
+            "advantage": outcome.advantage,
+        }
+        if swept:
+            payload["sweep"] = [
+                {
+                    "deviations": multiple,
+                    "distance": multiple * deviation,
+                    "fill_probability": each.fill_probability,
+                    "expected_cost": each.expected_cost,
+                    "cost_deviation": each.cost_deviation,
+                }
+                for multiple, each in swept
+            ]
+        if drawn is not None and corrected is not None:
+            payload["simulated"] = {
+                "fill_probability": drawn.fill_probability,
+                "standard_error": drawn.fill_error,
+                "expected_cost": drawn.expected_cost,
+                "cost_standard_error": drawn.cost_error,
+                "cost_deviation": drawn.cost_deviation,
+                "paths": drawn.paths,
+                "steps": drawn.steps,
+                "monitoring_bias": outcome.fill_probability / drawn.fill_probability - 1.0,
+                "corrected_formula": corrected,
+                "corrected_gap": corrected / drawn.fill_probability - 1.0,
+            }
+        json.dump(payload, out, indent=2)
+        print(file=out)
+        return
+
+    print(f"one standard deviation of the mid over the horizon: {deviation:.6g}", file=out)
+    print(f"resting {resting.standardised_distance:.4f} standard deviations out", file=out)
+    print(
+        f"fill probability: {outcome.fill_probability:.6f}, against "
+        f"{terminal:.6f} for merely ending below the limit "
+        f"(ratio {outcome.fill_probability / terminal:.6f})",
+        file=out,
+    )
+    print(
+        f"mid conditional on a fill: {outcome.mid_if_filled:.6g}, against a limit "
+        f"price of {-resting.distance:.6g}",
+        file=out,
+    )
+    print(f"mid conditional on a miss: {outcome.mid_if_unfilled:.6g}", file=out)
+    print(
+        f"expected cost: {outcome.expected_cost:.6g} +/- {outcome.cost_deviation:.6g}, "
+        f"against {outcome.crossing_cost:.6g} to cross now "
+        f"(advantage {outcome.advantage:.6g})",
+        file=out,
+    )
+    if swept:
+        print(f"{'sd out':>8}{'fill':>12}{'mean cost':>14}{'deviation':>14}", file=out)
+        for multiple, each in swept:
+            print(
+                f"{multiple:>8.3f}{each.fill_probability:>12.6f}"
+                f"{each.expected_cost:>14.6g}{each.cost_deviation:>14.6g}",
+                file=out,
+            )
+        print(
+            "Both columns move the same way, so there is no distance that trades "
+            "one against the other: rest at the tightest price the book allows.",
+            file=out,
+        )
+    if drawn is not None and corrected is not None:
+        print(
+            f"simulated over {drawn.paths} paths of {drawn.steps} steps: "
+            f"{drawn.fill_probability:.6f} +/- {drawn.fill_error:.6f}",
+            file=out,
+        )
+        bias = outcome.fill_probability / drawn.fill_probability - 1.0
+        gap = corrected / drawn.fill_probability - 1.0
+        print(
+            f"discrete monitoring reads {100.0 * bias:.4f}% low; the "
+            f"continuity-corrected formula gives {corrected:.6f}, "
+            f"{100.0 * gap:+.4f}% from the simulation",
+            file=out,
+        )
+
+
 def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     stream = sys.stdout if out is None else out
     args = build_parser().parse_args(argv)
@@ -1027,6 +1256,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         "basket": _run_basket,
         "transient": _run_transient,
         "adaptive": _run_adaptive,
+        "placement": _run_placement,
         "sample-data": _run_sample,
     }
     try:

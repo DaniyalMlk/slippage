@@ -345,3 +345,87 @@ at a quantity of 1e-100, where it is 1e-230 and divides perfectly well; the only
 route to zero is underflow at around 1e-150, which is what the test now uses. And
 `covers` read an infinite standard error as agreement, so a single draw — the
 weakest evidence available — was reported as the strongest.
+
+## Phase 14 — Rest or cross, and what the choice is actually worth
+
+- [x] The fill probability of a resting order, which is a running-minimum
+      probability and not a terminal one
+- [x] The mid conditional on the fill and on the miss, in closed form, because
+      that is the adverse selection
+- [x] The expected cost against the arrival mid, with the half spread, the
+      taker fee and the maker rebate in it
+- [x] Its variance, so the choice is not made on the mean alone
+- [x] The drift case, which is what "picked off" means, with a number on it
+- [x] Simulation of the same quantities, and an honest account of the bias
+      discrete monitoring puts in
+- [x] A command-line entry point
+
+`benchmarks` scores a finished order and `reversion` measures what happened
+after it. Neither addressed the decision taken first, which is whether to cross
+now or rest and hope. It has a closed form under a Brownian mid, and three of
+the results are worth more than the pricing.
+
+**The factor of two.** The fill probability is a statement about the running
+minimum, and with no drift it is `2 Phi(-delta / sigma sqrt(T))` — exactly
+twice the chance of merely *ending* below the limit, measured as 2.000000 at
+four distances. Reading the terminal distribution instead halves the answer and
+does so quietly, because the result is still a plausible probability.
+
+**Conditional on filling, the expected mid at the horizon is exactly the limit
+price.** `E[X_T 1{touch}]` is `2 b Phi(b/s)` and `P(touch)` is `2 Phi(b/s)`, so
+the ratio is `b` — the barrier itself, to twelve digits at four distances. The
+adverse selection therefore cancels the whole of the apparent saving: against
+the *arrival* mid a filled order saved `delta`, and against the *terminal* mid
+it saved nothing at all. Which benchmark is being used is the entire content of
+"a passive fill was worth something", and that is a result about `benchmarks`
+as much as about this module.
+
+**So there is no frontier.** The whole driftless expected cost is
+`(h + f)(1 - p) - r p`, with the distance appearing nowhere else — checked
+against the general formula to thirteen digits at six distances. Every term
+that referenced the distance cancelled against the adverse selection. And the
+standard deviation rises with the distance too: over a day at 20% volatility
+with a five basis point half spread, the mean goes from -0.94 to +6.00 basis
+points while the deviation goes from 16.4 to 126.0. Both monotone, both the
+same way, so resting deeper is worse on both counts and the answer is always
+the tightest price the book allows. `frontier()` is named for what a caller
+expects and will not find.
+
+**What being picked off costs.** The one thing that changes the answer is a
+drift. At half a standard deviation of drift per horizon, resting one standard
+deviation out costs 62.3 basis points against 0.45 at the touch; at one
+standard deviation of drift, 125.6 against 2.69 — a factor of 47. Out at one
+standard deviation the cost is linear in the drift (117, 127 and 130 basis
+points per standard deviation of it across three intervals) and at the touch it
+grows faster than linearly from a base of -0.94.
+
+**Simulating a barrier is biased, and the correction only fixes half of it.**
+A path checked at its own time steps misses the excursions between them, so the
+fill frequency comes out low: 3.60% at 250 steps, 1.89% at 1,000, 0.91% at
+4,000 and 0.45% at 16,000, with successive ratios of 1.91, 2.08 and 2.00 — the
+square-root rate. Moving the barrier by `0.5826 sigma sqrt(T/steps)`, the
+Broadie-Glasserman-Kou continuity correction, brings the formula to within
+-0.06%, +0.08%, +0.01% and +0.007% of the discrete simulation: between
+twenty-three and seventy-eight times better, and at the noise floor of 200,000
+paths.
+
+It does *not* fix the mean cost, which was worth finding out rather than
+assuming, since the mean is built out of the same barrier. The shifted
+formula's mean is still 21.7, 11.9, 6.1 and 1.9 standard errors from the
+simulated one at those four step counts: the bias in the mean lives in
+`E[X_T 1{fill}]` rather than in the probability, and moving the barrier changes
+that term the wrong way. A test on the probability can use a modest step count
+and the correction; a test on the mean needs the steps.
+
+Two defects, both in what was asserted.
+
+Resting far out was asserted to lose to crossing immediately. It does not:
+delay is free under a martingale, so `(h+f)(1-p) - r p` is below `h+f` for any
+positive fill probability, and four standard deviations out the advantage is
+4.4e-08 — vanishing and still positive. What makes resting lose is a drift, and
+the loss then converges to the drift over the horizon, which is what the test
+asserts now.
+
+And the simulation function was first called `simulate`, which shadowed
+`slippage.simulate` at package level, where both are re-exported. The suffix in
+`simulate_placement` is not decoration.
