@@ -912,6 +912,78 @@ fitted prefactor near 0.64; the fit lands within 1.5 standard errors of it. The
 test suite folds the path factor into the regression and recovers the
 generating 0.7 directly.
 
+## Rest or cross, and the factor of two
+
+`benchmarks` scores a finished order; `reversion` measures what happened after
+it. `placement` prices the decision taken before either: cross now, or rest a
+bid below the mid and hope.
+
+```python
+from slippage import Placement, evaluate
+
+resting = Placement(
+    distance=0.05,
+    horizon=1.0,
+    volatility=0.20,
+    half_spread=0.0005,
+    taker_fee=0.0001,
+    maker_rebate=0.0001,
+)
+outcome = evaluate(resting)
+outcome.fill_probability  # 0.802587 -- a *running minimum* probability
+outcome.mid_if_filled  # -0.05 exactly: the limit price itself
+outcome.advantage  # what resting beats crossing by, in expectation
+```
+
+Three results matter more than the price.
+
+**The fill probability is twice what the terminal distribution says.** With no
+drift it is `2Φ(-δ/σ√T)`, because every path that ends above the barrier having
+touched it is matched to one that ends below. Measured at four distances the
+ratio is 2.000000. Using the terminal distribution halves the answer quietly,
+since the result still looks like a probability.
+
+**Conditional on filling, the expected mid at the horizon is exactly the limit
+price** — `2bΦ(b/s)` over `2Φ(b/s)` is `b`, to twelve digits. So the adverse
+selection cancels the whole of the apparent saving: against the arrival mid a
+filled order saved `δ`; against the terminal mid it saved nothing. Which
+benchmark is in use is the entire content of "the passive fill was worth
+something".
+
+**And so there is no frontier.** The whole driftless expected cost is
+`(h+f)(1-p) - r·p` with the distance nowhere else in it, and the standard
+deviation rises with the distance too — over a day at 20% volatility with a
+five basis point half spread, the mean goes from -0.94 to +6.00 basis points
+while the deviation goes from 16.4 to 126.0. Resting deeper is worse on both
+counts, so the answer is always the tightest price the book allows.
+`frontier()` is named for what a caller expects and will not find:
+
+```bash
+slippage placement --distance 0.0126 --horizon 0.003968 --volatility 0.2 \
+  --half-spread 0.0005 --maker-rebate 0.0001 --sweep 0.01 0.5 1 2 4
+```
+
+What does change the answer is a drift. At half a standard deviation of it per
+horizon, resting one standard deviation out costs 62.3 basis points against
+0.45 at the touch; at one standard deviation, 125.6 against 2.69 — a factor of
+47.
+
+### Simulating a barrier is biased, and the correction fixes half of it
+
+`simulate_placement` walks the path and settles the order on it, sharing no
+algebra with the closed forms. It is biased low, because a path checked at its
+own time steps misses the excursions between them: 3.60% at 250 steps, 1.89% at
+1,000, 0.91% at 4,000, 0.45% at 16,000 — halving as the step count quadruples.
+`monitoring_shift` applies the Broadie-Glasserman-Kou correction and the
+formula then matches the discrete simulation to between 0.007% and 0.08%.
+
+It does **not** fix the mean cost. The shifted formula's mean is still 21.7,
+11.9, 6.1 and 1.9 standard errors away at those four step counts, because the
+bias in the mean lives in `E[X_T 1{fill}]` rather than in the probability and
+moving the barrier changes that term the wrong way. A test on the probability
+can use a modest step count and the correction; a test on the mean needs the
+steps.
+
 ## Layout
 
 | module | contents |
@@ -923,6 +995,7 @@ generating 0.7 directly.
 | `basket` | the multi-asset liquidation, its eigen-directions, and the leg-by-leg comparison |
 | `scheduling` | the constrained dynamic programme and its re-optimisation policy |
 | `volume`, `simulate` | volume profiles, TWAP/VWAP/POV schedules and Monte Carlo costs |
+| `placement` | resting a limit order against crossing: fill probability, adverse selection and the cost of each |
 | `io`, `cli`, `synthetic` | CSV input and output, the `slippage` command, synthetic books |
 
 
