@@ -687,3 +687,92 @@ def test_adaptive_refuses_a_regime_whose_permanent_impact_dominates() -> None:
         "--persistence", "0.8",
     ]  # fmt: skip
     assert main(heavy) == 2
+
+
+PLACEMENT_ARGS = [
+    "placement",
+    "--distance", "0.05",
+    "--horizon", "1",
+    "--volatility", "0.2",
+    "--half-spread", "0.0005",
+    "--taker-fee", "0.0001",
+    "--maker-rebate", "0.0001",
+]  # fmt: skip
+
+
+def test_placement_reports_the_factor_of_two_and_the_conditional_mid() -> None:
+    code, text = run(*PLACEMENT_ARGS)
+    assert code == 0
+    assert "ratio 2.000000" in text
+    # Driftless, so the mid conditional on a fill is the limit price itself.
+    assert "mid conditional on a fill: -0.05, against a limit price of -0.05" in text
+
+
+def test_placement_in_json_carries_every_quantity() -> None:
+    code, text = run(*PLACEMENT_ARGS, "--json")
+    assert code == 0
+    payload = json.loads(text)
+    assert payload["running_over_terminal"] == pytest.approx(2.0, abs=1e-12)
+    assert payload["mid_if_filled"] == pytest.approx(-0.05, rel=1e-12)
+    assert payload["mid_if_unfilled"] > 0.0
+    assert payload["expected_cost"] == pytest.approx(
+        0.0006 * (1.0 - payload["fill_probability"]) - 0.0001 * payload["fill_probability"],
+        rel=1e-12,
+    )
+    assert payload["advantage"] > 0.0
+
+
+def test_placement_sweep_moves_both_columns_the_same_way() -> None:
+    code, text = run(*PLACEMENT_ARGS, "--json", "--sweep", "0.01", "0.5", "1", "2", "4")
+    assert code == 0
+    rows = json.loads(text)["sweep"]
+    assert [row["deviations"] for row in rows] == [0.01, 0.5, 1.0, 2.0, 4.0]
+    means = [row["expected_cost"] for row in rows]
+    spreads = [row["cost_deviation"] for row in rows]
+    assert means == sorted(means)
+    assert spreads == sorted(spreads)
+
+
+def test_placement_sweep_in_text_says_there_is_nothing_to_trade_off() -> None:
+    code, text = run(*PLACEMENT_ARGS, "--sweep", "0.5", "1")
+    assert code == 0
+    assert "sd out" in text
+    assert "tightest price the book allows" in text
+
+
+def test_placement_refuses_a_non_positive_sweep() -> None:
+    assert main([*PLACEMENT_ARGS, "--sweep", "0.5", "0"]) == 2
+
+
+def test_placement_simulates_and_reports_the_monitoring_bias() -> None:
+    code, text = run(*PLACEMENT_ARGS, "--json", "--draws", "20000", "--steps", "500", "--seed", "4")
+    assert code == 0
+    simulated = json.loads(text)["simulated"]
+    assert simulated["paths"] == 20000
+    assert simulated["steps"] == 500
+    # The formula reads high against a discretely monitored path, and the
+    # continuity correction closes most of that gap.
+    assert simulated["monitoring_bias"] > 0.0
+    assert abs(simulated["corrected_gap"]) < 0.5 * simulated["monitoring_bias"]
+
+
+def test_placement_text_output_mentions_the_correction() -> None:
+    code, text = run(*PLACEMENT_ARGS, "--draws", "10000", "--steps", "400", "--seed", "1")
+    assert code == 0
+    assert "discrete monitoring reads" in text
+    assert "continuity-corrected formula" in text
+
+
+def test_placement_with_a_drift_loses_to_crossing() -> None:
+    code, text = run(*PLACEMENT_ARGS, "--json", "--drift", "0.3")
+    assert code == 0
+    payload = json.loads(text)
+    assert payload["advantage"] < 0.0
+    # An adverse drift lifts the conditional mid off the limit price.
+    assert payload["mid_if_filled"] > -0.05
+
+
+def test_placement_refuses_a_zero_volatility() -> None:
+    arguments = list(PLACEMENT_ARGS)
+    arguments[arguments.index("--volatility") + 1] = "0"
+    assert main(arguments) == 2
