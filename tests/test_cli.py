@@ -776,3 +776,86 @@ def test_placement_refuses_a_zero_volatility() -> None:
     arguments = list(PLACEMENT_ARGS)
     arguments[arguments.index("--volatility") + 1] = "0"
     assert main(arguments) == 2
+
+
+VWAP_ARGS = [
+    "vwap",
+    "--quantity", "1000000",
+    "--profile", "1.9", "1.3", "1.0", "0.85", "0.8", "0.75", "0.72",
+    "0.75", "0.8", "0.9", "1.1", "1.4", "2.1",
+    "--concentration", "60",
+    "--volatility", "0.004",
+    "--price", "50",
+    "--bucket-hours", "0.5",
+]  # fmt: skip
+
+
+def test_vwap_leads_with_the_floor() -> None:
+    """Because the floor decides whether anything else in the report is actionable."""
+    out = io.StringIO()
+    assert main([*VWAP_ARGS, "--json"], out) == 0
+    payload = json.loads(out.getvalue())
+    assert payload["buckets"] == 13
+    assert payload["irreducible_bps"] == pytest.approx(8.05, abs=0.05)
+    # the volume-matching schedule is exactly at the floor, by construction
+    assert payload["tracking_error_bps"] == pytest.approx(payload["irreducible_bps"], rel=1e-12)
+    assert payload["concentration"] == pytest.approx(60.0)
+    assert sum(payload["schedule"]) == pytest.approx(1.0, rel=1e-12)
+    assert payload["schedule"][0] > payload["schedule"][6]
+
+
+def test_vwap_frontier_runs_from_impact_to_the_floor() -> None:
+    out = io.StringIO()
+    extra = ["--eta", "2e-6", "--gamma", "2e-7", "--risk-aversion", "0", "1000", "1000000"]
+    assert main([*VWAP_ARGS, *extra, "--json"], out) == 0
+    frontier = json.loads(out.getvalue())["frontier"]
+    assert len(frontier) == 3
+    assert frontier[0]["tracking_error_bps"] > frontier[-1]["tracking_error_bps"]
+    assert frontier[0]["impact_bps"] < frontier[-1]["impact_bps"]
+    # no weight on tracking error means an equal slice regardless of the volume
+    assert frontier[0]["schedule"] == pytest.approx([1.0 / 13.0] * 13, abs=1e-4)
+
+
+def test_vwap_frontier_needs_an_impact_parameter() -> None:
+    out = io.StringIO()
+    assert main([*VWAP_ARGS, "--risk-aversion", "100"], out) == 2
+
+
+def test_vwap_compares_an_arrival_price_schedule_against_the_benchmark() -> None:
+    """The number that says what the other objective costs here."""
+    front_loaded = [f"{0.7**k:.6f}" for k in range(13)]
+    out = io.StringIO()
+    assert main([*VWAP_ARGS, "--compare", *front_loaded, "--json"], out) == 0
+    comparison = json.loads(out.getvalue())["comparison"]
+    assert comparison["other_schedule_error_bps"] > comparison["vwap_schedule_error_bps"]
+    assert comparison["excess_over_floor"] > 3.0
+    text = io.StringIO()
+    assert main([*VWAP_ARGS, "--compare", *front_loaded], text) == 0
+    assert "times the floor" in text.getvalue()
+
+
+def test_vwap_fits_a_concentration_to_a_dispersion_vector() -> None:
+    """Which is the field volume.estimate_profile has always produced and nothing read."""
+    out = io.StringIO()
+    dispersion = [
+        "0.0434", "0.0349", "0.0310", "0.0288", "0.0280", "0.0272", "0.0266",
+        "0.0272", "0.0280", "0.0296", "0.0325", "0.0362", "0.0455",
+    ]  # fmt: skip
+    base = [*VWAP_ARGS[:-8], "--volatility", "0.004", "--dispersion", *dispersion]
+    assert main([*base, "--json"], out) == 0
+    payload = json.loads(out.getvalue())
+    assert payload["concentration"] > 1.0
+    assert payload["irreducible_bps"] > 0.0
+
+
+def test_vwap_needs_uncertainty_from_somewhere() -> None:
+    """A VWAP benchmark is only unreachable because volume is uncertain."""
+    out = io.StringIO()
+    bare = [one for one in VWAP_ARGS if one not in {"--concentration", "60"}]
+    assert main(bare, out) == 2
+
+
+def test_vwap_refuses_mismatched_vector_lengths() -> None:
+    out = io.StringIO()
+    assert main([*VWAP_ARGS, "--compare", "1", "2", "3"], out) == 2
+    assert main([*VWAP_ARGS, "--dispersion", "0.04", "0.03"], out) == 2

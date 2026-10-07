@@ -984,6 +984,82 @@ moving the barrier changes that term the wrong way. A test on the probability
 can use a modest step count and the correction; a test on the mean needs the
 steps.
 
+## A benchmark that moves, and the floor it sets
+
+Five schedulers here — `execution`, `scheduling`, `basket`, `transient`,
+`adaptive` — minimise cost against the **arrival price**, a number fixed before
+the first share trades. Risk is in the position still held, so risk aversion
+front-loads.
+
+A VWAP benchmark is a weighted average of the *same prices the order trades at*.
+It moves with the market, and the exposure is the difference between our
+participation and the market's. `tracking` is that problem.
+
+```python
+from slippage import TrackingProblem, compare_objectives, fit_volume_covariance
+
+uncertainty = fit_volume_covariance(profile)  # from the dispersion it measured
+order = TrackingProblem(shares=1e6, profile=profile, volatility=0.004)
+
+moments = tracking_moments(order, order.expected, uncertainty)
+moments.irreducible_bps  # 8.05 -- the floor, which no schedule crosses
+moments.schedule_variance  # exactly 0.0 at the volume curve
+```
+
+### Matching the realised curve is exactly zero, path by path
+
+With `u` our share of the order in each bucket and `w` the market's realised
+share, both summing to one, a driftless walk gives
+`slippage = sigma sum_k (u_k - w_k) b_k` — the arrival price cancels. So a
+schedule that matched the realised volume curve would have **zero** tracking
+error on every path, whatever the prices did. Nothing in an arrival-price problem
+behaves like this, and volume uncertainty is the only reason it cannot be done.
+
+### The volume curve is optimal, and that is a theorem
+
+Taking variances splits the error exactly into
+`(u - mu)' C (u - mu) + trace(C S)`. The second term has no schedule in it, so it
+is a floor. The first is a positive quadratic form minimised at `u = mu`, so the
+expected volume profile is the variance-minimising schedule — usually quoted as a
+rule of thumb, and it holds for *any* positive-definite `C`, so it does not depend
+on the price model beyond the walk having no drift. Three hundred random
+perturbations confirm it; the schedule term at `mu` is exactly 0.0.
+
+### Where in a bucket its price is read makes no difference
+
+The choice adds a constant to every entry of `C`, and both terms are orthogonal to
+a constant: the schedule deviation sums to zero, and the covariance's rows sum to
+zero because the shares sum to one. The two conventions agree to twelve
+significant figures, and adding 1000 to every entry of `C` moves the floor by
+1.2e-15. One fewer arbitrary parameter than the model looked like it needed.
+
+### A diagonal volume covariance overstates the floor by 56%
+
+`VolumeProfile.dispersion` has been estimated since volume profiles were added and
+read by nothing — it is the input here. Shares live on a simplex, so their
+covariance cannot be diagonal, and a Dirichlet is the one-parameter family with the
+structure the constraint forces. Dropping the negative correlations puts the floor
+**56.4% too high**, at every concentration. A desk told its irreducible error was
+12.6 basis points when it was 8.1 would accept schedules it should refuse.
+
+### Front-loading costs 4.9 floors; ignoring the volume curve costs 0.45
+
+The number that separates two things usually lumped together. A front-loaded
+arrival-price schedule tracks VWAP at **47.8** basis points against the volume
+curve's 8.05 — an excess of **4.93 times the floor**. But TWAP, which ignores the
+volume curve entirely, is only **0.45 floors** worse, inside what a desk can
+measure.
+
+So almost all of the benefit of VWAP tracking is in *not front-loading*, and
+matching the curve exactly is the remainder. Worth knowing before building a
+volume forecast to chase it.
+
+```bash
+slippage vwap --quantity 1000000 --volatility 0.004 --price 50 --bucket-hours 0.5 \
+  --profile 1.9 1.3 1.0 0.85 0.8 0.75 0.72 0.75 0.8 0.9 1.1 1.4 2.1 \
+  --concentration 60 --eta 2e-6 --risk-aversion 0 1000 1000000
+```
+
 ## Layout
 
 | module | contents |
@@ -996,6 +1072,7 @@ steps.
 | `scheduling` | the constrained dynamic programme and its re-optimisation policy |
 | `volume`, `simulate` | volume profiles, TWAP/VWAP/POV schedules and Monte Carlo costs |
 | `placement` | resting a limit order against crossing: fill probability, adverse selection and the cost of each |
+| `tracking` | VWAP tracking error, its irreducible floor, and the trade-off against impact |
 | `io`, `cli`, `synthetic` | CSV input and output, the `slippage` command, synthetic books |
 
 
