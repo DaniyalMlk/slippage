@@ -264,9 +264,14 @@ def price_covariance(buckets: int, volatility: float, *, midpoint: bool = True) 
         raise ValidationError(f"buckets must be at least 1, got {buckets}")
     if not math.isfinite(volatility) or volatility < 0.0:
         raise ValidationError(f"volatility must be finite and non-negative, got {volatility!r}")
-    index = np.arange(1, buckets + 1, dtype=np.float64)
-    if midpoint:
-        index = index - 0.5
+    # Built in one expression rather than assigned and then shifted. Under the
+    # numpy stubs CI pins for Python 3.10, subtracting a float from a
+    # one-dimensional array widens its shape type, so reassigning it to the same
+    # name is an error there and nowhere else.
+    offset = 0.5 if midpoint else 0.0
+    index: FloatArray = np.asarray(
+        np.arange(1, buckets + 1, dtype=np.float64) - offset, dtype=np.float64
+    )
     return np.asarray(np.minimum.outer(index, index) * volatility * volatility, dtype=np.float64)
 
 
