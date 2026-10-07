@@ -33,6 +33,7 @@ from itertools import pairwise
 
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from slippage.exceptions import ValidationError
 from slippage.impact import LinearImpact, PowerLawImpact
@@ -47,6 +48,12 @@ from slippage.tracking import (
     tracking_schedule,
 )
 from slippage.volume import VolumeProfile, twap_schedule, vwap_schedule
+
+#: Spelled out rather than left as a bare ``np.ndarray``. Under the numpy stubs
+#: CI pins for Python 3.10 the generic has no defaults, so a bare annotation is a
+#: type error there and nowhere else -- which is reproducible without 3.10 by
+#: installing numpy 2.0.2 and running mypy.
+FloatArray = NDArray[np.float64]
 
 BUCKETS = 13
 #: A U-shaped session: heavy at the open and the close, thin in the middle.
@@ -83,7 +90,7 @@ def order(midpoint: bool = True, volatility: float = VOLATILITY) -> TrackingProb
     )
 
 
-def walk(rng: np.random.Generator, paths: int, *, midpoint: bool) -> np.ndarray:
+def walk(rng: np.random.Generator, paths: int, *, midpoint: bool) -> FloatArray:
     """A Brownian price walk sampled at bucket midpoints or ends.
 
     Written out here rather than taken from the module, so that the closed form
@@ -94,17 +101,17 @@ def walk(rng: np.random.Generator, paths: int, *, midpoint: bool) -> np.ndarray:
     steps = rng.standard_normal((paths, BUCKETS))
     gaps = np.ones(BUCKETS)
     gaps[0] = 0.5 if midpoint else 1.0
-    return np.cumsum(steps * np.sqrt(gaps), axis=1) * VOLATILITY
+    return np.asarray(np.cumsum(steps * np.sqrt(gaps), axis=1) * VOLATILITY, dtype=np.float64)
 
 
 def simulate(
     rng: np.random.Generator,
-    weights: np.ndarray,
+    weights: FloatArray,
     paths: int,
     *,
     midpoint: bool = True,
     match_realised: bool = False,
-) -> np.ndarray:
+) -> FloatArray:
     """Relative slippage against the realised VWAP, path by path."""
     weights = np.asarray(weights, dtype=np.float64)
     weights = weights / weights.sum()
