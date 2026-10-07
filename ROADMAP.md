@@ -429,3 +429,89 @@ asserts now.
 And the simulation function was first called `simulate`, which shadowed
 `slippage.simulate` at package level, where both are re-exported. The suffix in
 `simulate_placement` is not decoration.
+
+## Phase 15 — A benchmark that moves, and the floor it sets
+
+- [x] The tracking error of a participation schedule against the realised VWAP,
+      in closed form
+- [x] Split into the part a schedule controls and the part it cannot
+- [x] The variance-minimising schedule derived rather than taken as a rule of
+      thumb
+- [x] A volume-uncertainty model fitted to the dispersion already measured, with
+      the fit's own error reported
+- [x] The trade-off against impact cost, so a schedule is chosen rather than
+      asserted
+- [x] What an arrival-price schedule costs when the benchmark is VWAP, in both
+      directions
+- [x] A command-line entry point that leads with the floor
+
+Five schedulers in this library — `execution`, `scheduling`, `basket`,
+`transient` and `adaptive` — answer one question in different settings: how to
+trade so the average price beats the **arrival price**. That benchmark is a number
+fixed before the first share trades, so the risk is in the position still held,
+and risk aversion front-loads.
+
+Most institutional orders are scored against the interval VWAP, which is a
+weighted average of the *same prices the order trades at*. The benchmark moves
+with the market, and the exposure is not the position but the difference between
+our participation and the market's. `benchmarks.score_order` measured the result
+after the fact and `volume.vwap_schedule` sliced a profile; nothing optimised
+tracking error and nothing said what part of it is unavoidable.
+
+**The algebra is two lines and both consequences are structural.** With ``u`` our
+share of the order in each bucket, ``w`` the market's realised share and both
+summing to one, a driftless walk gives
+``slippage = sigma sum_k (u_k - w_k) b_k`` — the arrival price cancels. So a
+schedule matching the realised curve has **zero** slippage path by path, which no
+arrival-price schedule can manage against its own benchmark; and volume
+uncertainty is the only obstacle, because ``u`` is chosen before ``w`` is known.
+
+Taking variances splits it exactly into ``(u - mu)' C (u - mu) + trace(C S)``. The
+second term has no schedule in it, so it is a floor. The first is a positive
+quadratic form minimised at ``u = mu``, which makes the expected volume profile the
+variance-minimising schedule — a theorem rather than the rule of thumb it is
+usually quoted as, and one that holds for any positive-definite ``C``, so it does
+not depend on the price model beyond the walk having no drift. Three hundred
+random perturbations confirm it, and the schedule term at ``mu`` is exactly 0.0.
+
+**Where in a bucket its price is read makes no difference at all**, which is one
+fewer arbitrary parameter than the model appeared to need. The choice adds a
+constant to every entry of ``C``, and both terms are orthogonal to a constant: the
+schedule deviation sums to zero and the covariance's rows sum to zero because the
+shares sum to one. The two conventions agree to twelve significant figures, and
+adding 1000 to every entry of ``C`` — six orders above its own entries — moves the
+floor by 1.2e-15. The first draft of the docstring claimed the choice moved the
+level and only left the optimum alone; it moves neither.
+
+**`VolumeProfile.dispersion` has been estimated since volume profiles were added
+and read by nothing.** It is the input here. Shares live on a simplex, so their
+covariance cannot be diagonal, and a Dirichlet is the one-parameter family with
+the structure the constraint forces. Using the dispersions alone and dropping the
+negative correlations puts the floor **56.4% too high**, at every concentration —
+both quadratic forms scale alike, so the overstatement is a property of the
+profile's shape rather than of how uncertain it is. A desk told its irreducible
+error was 12.6 basis points when it was 8.1 would accept schedules it should
+refuse. The fit also reports its own worst per-bucket miss, because one parameter
+cannot in general match a vector of them.
+
+**The frontier's ends are known before the solve, which is what makes them a
+check.** No weight on tracking error recovers `twap_schedule` to a part in ten
+thousand — an equal slice minimises a convex temporary cost regardless of where
+the volume is. A large weight recovers the volume curve with the tracking error at
+its floor. Between them impact rises from 82.0 to 91.2 basis points as tracking
+error falls from 11.64 to 8.05.
+
+**The number a desk needs separates two things usually lumped together.** A
+front-loaded arrival-price schedule tracks VWAP at **47.8** basis points against
+the volume curve's 8.05 — an excess of **4.93 times the floor**. Risk aversion
+front-loads against a fixed benchmark and does the opposite against this one, so
+the two objectives genuinely conflict. But TWAP, which ignores the volume curve
+entirely, is only **0.45 floors** worse, which is inside what a desk can measure.
+So almost all of the benefit is in not front-loading, and matching the curve
+exactly is the remainder — worth knowing before building a volume forecast.
+
+A defect in the test rather than the module, recorded because the symptom pointed
+the wrong way. The validating simulation wrote its walk as
+``cumsum(eps) - eps / 2``, which has ``Var(b_k) = k - 3/4`` rather than
+``k - 1/2``, and the closed form read 10% high at z = -44 on two of three
+schedules. The formula was right.

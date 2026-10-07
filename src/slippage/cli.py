@@ -28,6 +28,7 @@ import math
 import os
 import sys
 from collections.abc import Sequence
+from datetime import time as dt_time
 from datetime import timedelta
 from pathlib import Path
 from typing import TextIO
@@ -67,12 +68,21 @@ from .scheduling import schedule_objective, solve_schedule
 from .series import BarSeries
 from .shortfall import DelayBasis
 from .synthetic import synthetic_book
+from .tracking import (
+    TrackingFrontierPoint,
+    TrackingProblem,
+    compare_objectives,
+    fit_volume_covariance,
+    tracking_frontier,
+    tracking_moments,
+)
 from .transient import (
     ExponentialDecay,
     PowerLawDecay,
     optimal_transient_schedule,
     residual_impact,
 )
+from .volume import VolumeProfile
 
 __all__ = ["main"]
 
@@ -428,6 +438,80 @@ def build_parser() -> argparse.ArgumentParser:
     )
     placement.add_argument("--seed", type=int, default=0)
     placement.add_argument("--json", action="store_true")
+
+    vwap = sub.add_parser(
+        "vwap",
+        help="tracking error against a volume-weighted benchmark, and its floor",
+        description=(
+            "Every other schedule here minimises cost against the arrival price, "
+            "which stands still. A VWAP benchmark is built from the same prices "
+            "the order trades at, so what matters is the difference between our "
+            "participation and the market's -- and a schedule matching the "
+            "realised volume curve would have zero tracking error on every path. "
+            "Volume uncertainty is the only thing stopping it, so the report "
+            "leads with the irreducible floor that uncertainty sets, which no "
+            "schedule crosses."
+        ),
+    )
+    vwap.add_argument("--quantity", type=float, required=True, help="order size in shares")
+    vwap.add_argument(
+        "--profile",
+        type=float,
+        nargs="+",
+        required=True,
+        metavar="W",
+        help="expected share of volume in each bucket; normalised",
+    )
+    vwap.add_argument(
+        "--dispersion",
+        type=float,
+        nargs="+",
+        default=None,
+        metavar="SD",
+        help="cross-day standard deviation of each bucket's share",
+    )
+    vwap.add_argument(
+        "--concentration",
+        type=float,
+        default=None,
+        help="Dirichlet concentration, instead of fitting one to --dispersion",
+    )
+    vwap.add_argument(
+        "--volatility",
+        type=float,
+        required=True,
+        help="fractional price standard deviation over one bucket",
+    )
+    vwap.add_argument("--price", type=float, default=1.0, help="arrival price")
+    vwap.add_argument(
+        "--bucket-hours",
+        dest="bucket_hours",
+        type=float,
+        default=1.0,
+        help="bucket length in the units --eta is quoted in",
+    )
+    vwap.add_argument(
+        "--eta", type=float, default=None, help="temporary impact, price per share per unit time"
+    )
+    vwap.add_argument("--gamma", type=float, default=0.0, help="permanent impact, price per share")
+    vwap.add_argument(
+        "--risk-aversion",
+        dest="risk_aversion",
+        type=float,
+        nargs="+",
+        default=None,
+        metavar="L",
+        help="weights on tracking variance; traces the frontier against --eta",
+    )
+    vwap.add_argument(
+        "--compare",
+        type=float,
+        nargs="+",
+        default=None,
+        metavar="W",
+        help="score another schedule, such as an arrival-price trajectory, against VWAP",
+    )
+    vwap.add_argument("--json", action="store_true")
 
     sample = sub.add_parser("sample-data", help="write a synthetic book to CSV")
     sample.add_argument("--out", type=Path, required=True)
@@ -810,6 +894,125 @@ def _run_frontier(args: argparse.Namespace, out: TextIO) -> None:
         print(
             f"{row['risk_aversion']:>10g}{row['expected_cost']:>14,.0f}{row['std']:>14,.0f}"
             f"{half:>11}{row['first_trade']:>14,.0f}",
+            file=out,
+        )
+
+
+def _run_vwap(args: argparse.Namespace, out: TextIO) -> None:
+    """Tracking error against a moving benchmark, and the part of it nobody can remove.
+
+    The floor is the first number because it is the one that decides whether any
+    of the rest is worth acting on. A schedule 2 basis points worse than optimal
+    against a 20 basis point floor is inside what a desk can measure; the same 2
+    against a 1 basis point floor is not.
+
+    ``--compare`` is the number that separates two things usually lumped together.
+    An arrival-price trajectory front-loads, which is the right answer to a
+    different question, and scoring it here says what that answer costs when the
+    benchmark is VWAP.
+    """
+    weights = list(args.profile)
+    total = sum(weights)
+    if total <= 0.0:
+        raise SlippageError("the profile weights sum to zero")
+    fractions = tuple(one / total for one in weights)
+    dispersion: tuple[float, ...] = ()
+    if args.dispersion is not None:
+        if len(args.dispersion) != len(fractions):
+            raise SlippageError(
+                f"--dispersion has {len(args.dispersion)} entries and --profile has "
+                f"{len(fractions)}"
+            )
+        dispersion = tuple(float(one) for one in args.dispersion)
+    if args.dispersion is None and args.concentration is None:
+        raise SlippageError(
+            "volume uncertainty is what makes a VWAP benchmark unreachable, so it "
+            "has to come from somewhere: pass --dispersion, which "
+            "volume.estimate_profile measures, or --concentration directly"
+        )
+    profile = VolumeProfile(
+        fractions=fractions,
+        bucket=timedelta(hours=args.bucket_hours),
+        session_open=dt_time(9, 30),
+        dispersion=dispersion,
+        days=0,
+    )
+    uncertainty = fit_volume_covariance(profile, concentration=args.concentration)
+    problem = TrackingProblem(
+        shares=args.quantity,
+        profile=profile,
+        volatility=args.volatility,
+        bucket_hours=args.bucket_hours,
+    )
+    matched = tracking_moments(problem, problem.expected, uncertainty)
+
+    payload: dict[str, object] = {
+        "buckets": problem.buckets,
+        "irreducible_bps": matched.irreducible_bps,
+        "tracking_error_bps": matched.tracking_error_bps,
+        "concentration": uncertainty.concentration,
+        "dispersion_fit_error": uncertainty.dispersion_error,
+        "schedule": [float(one) for one in problem.expected],
+    }
+    points: tuple[TrackingFrontierPoint, ...] = ()
+    if args.risk_aversion is not None:
+        if args.eta is None:
+            raise SlippageError("a frontier against tracking error needs --eta")
+        model = LinearImpact(gamma=args.gamma, eta=args.eta, epsilon=0.0)
+        points = tracking_frontier(
+            problem, uncertainty, model, args.risk_aversion, price=args.price
+        )
+        payload["frontier"] = [
+            {
+                "risk_aversion": one.risk_aversion,
+                "impact_bps": one.impact_bps,
+                "tracking_error_bps": one.tracking_error_bps,
+                "schedule": list(one.schedule),
+            }
+            for one in points
+        ]
+    if args.compare is not None:
+        if len(args.compare) != problem.buckets:
+            raise SlippageError(
+                f"--compare has {len(args.compare)} entries and --profile has {problem.buckets}"
+            )
+        comparison = compare_objectives(problem, uncertainty, args.compare)
+        payload["comparison"] = {
+            "vwap_schedule_error_bps": comparison.vwap_schedule_error_bps,
+            "other_schedule_error_bps": comparison.other_schedule_error_bps,
+            "excess_bps": comparison.excess_bps,
+            "excess_over_floor": comparison.excess_over_floor,
+        }
+
+    if args.json:
+        print(json.dumps(payload, indent=2), file=out)
+        return
+
+    print(f"buckets                    {problem.buckets}", file=out)
+    print(f"irreducible floor          {matched.irreducible_bps:.4f} bp", file=out)
+    print(f"volume-matching schedule   {matched.tracking_error_bps:.4f} bp", file=out)
+    print(
+        f"Dirichlet concentration    {uncertainty.concentration:.4f}"
+        f"  (worst dispersion miss {uncertainty.dispersion_error:.1%})",
+        file=out,
+    )
+    if points:
+        print(file=out)
+        print(f"{'lambda':>14}{'impact bp':>12}{'tracking bp':>14}", file=out)
+        for point in points:
+            print(
+                f"{point.risk_aversion:>14.4g}{point.impact_bps:>12.4f}"
+                f"{point.tracking_error_bps:>14.4f}",
+                file=out,
+            )
+    if args.compare is not None:
+        comparison = compare_objectives(problem, uncertainty, args.compare)
+        print(file=out)
+        print(
+            f"the schedule given tracks at {comparison.other_schedule_error_bps:.4f} bp "
+            f"against the volume curve's {comparison.vwap_schedule_error_bps:.4f} bp: "
+            f"{comparison.excess_bps:+.4f} bp, which is "
+            f"{comparison.excess_over_floor:+.2f} times the floor",
             file=out,
         )
 
@@ -1257,6 +1460,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         "transient": _run_transient,
         "adaptive": _run_adaptive,
         "placement": _run_placement,
+        "vwap": _run_vwap,
         "sample-data": _run_sample,
     }
     try:
