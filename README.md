@@ -998,12 +998,12 @@ participation and the market's. `tracking` is that problem.
 ```python
 from slippage import TrackingProblem, compare_objectives, fit_volume_covariance
 
-uncertainty = fit_volume_covariance(profile)        # from the dispersion it measured
+uncertainty = fit_volume_covariance(profile)  # from the dispersion it measured
 order = TrackingProblem(shares=1e6, profile=profile, volatility=0.004)
 
 moments = tracking_moments(order, order.expected, uncertainty)
-moments.irreducible_bps      # 8.05 -- the floor, which no schedule crosses
-moments.schedule_variance    # exactly 0.0 at the volume curve
+moments.irreducible_bps  # 8.05 -- the floor, which no schedule crosses
+moments.schedule_variance  # exactly 0.0 at the volume curve
 ```
 
 ### Matching the realised curve is exactly zero, path by path
