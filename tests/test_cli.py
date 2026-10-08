@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -859,3 +860,123 @@ def test_vwap_refuses_mismatched_vector_lengths() -> None:
     out = io.StringIO()
     assert main([*VWAP_ARGS, "--compare", "1", "2", "3"], out) == 2
     assert main([*VWAP_ARGS, "--dispersion", "0.04", "0.03"], out) == 2
+
+
+# -- forecast ---------------------------------------------------------------
+
+
+def _forecast_arguments() -> list[str]:
+    return [
+        "forecast",
+        "--quantity",
+        "1000000",
+        "--horizon",
+        "1",
+        "--periods",
+        "20",
+        "--volatility",
+        "0.9",
+        "--eta",
+        "2.5e-6",
+        "--gamma",
+        "2.5e-7",
+        "--risk-aversion",
+        "2e-6",
+    ]
+
+
+def test_forecast_leads_with_what_the_forecast_is_worth() -> None:
+    out = io.StringIO()
+    assert main([*_forecast_arguments()], out) == 0
+    text = out.getvalue()
+    assert "forecast saving" in text
+    assert "bps at 50" in text
+    assert "mu' G mu / 2" in text
+    assert "recovers 99." in text
+
+
+def test_forecast_json_agrees_with_its_own_closed_form() -> None:
+    out = io.StringIO()
+    assert main([*_forecast_arguments(), "--json"], out) == 0
+    payload = json.loads(out.getvalue())
+    assert payload["saving"] == pytest.approx(payload["closed_form_value"], rel=1e-9)
+    assert payload["saving_bps"] == pytest.approx(0.0801, rel=0.03)
+    assert payload["tilt_recovered"] == pytest.approx(0.993, rel=0.02)
+    assert payload["round_trips"] is False
+    assert len(payload["trades"]) == 20
+    assert math.fsum(payload["trades"]) == pytest.approx(1_000_000.0, rel=1e-12)
+
+
+def test_forecast_reports_a_schedule_that_trades_backwards() -> None:
+    """At five period volatilities of reversing forecast, which it takes."""
+    out = io.StringIO()
+    assert (
+        main(
+            [*_forecast_arguments(), "--profile", "reversing", "--drift", "3.0"],
+            out,
+        )
+        == 0
+    )
+    text = out.getvalue()
+    assert "trades backwards" in text
+    assert "a different trade and not a smaller cost" in text
+
+
+def test_forecast_names_the_fixed_cost_a_round_trip_breaks() -> None:
+    out = io.StringIO()
+    assert (
+        main(
+            [
+                *_forecast_arguments(),
+                "--epsilon",
+                "0.01",
+                "--profile",
+                "reversing",
+                "--drift",
+                "3.0",
+            ],
+            out,
+        )
+        == 0
+    )
+    assert "no longer schedule-independent" in out.getvalue()
+
+
+@pytest.mark.parametrize("profile", ["flat", "decaying", "spike", "reversing"])
+def test_forecast_accepts_each_named_profile(profile: str) -> None:
+    out = io.StringIO()
+    assert main([*_forecast_arguments(), "--profile", profile, "--json"], out) == 0
+    payload = json.loads(out.getvalue())
+    assert len(payload["drifts"]) == 20
+    assert payload["saving"] >= -1e-9
+
+
+def test_forecast_takes_an_explicit_drift_list_and_checks_its_length() -> None:
+    drifts = ",".join(["0.01"] * 20)
+    out = io.StringIO()
+    assert main([*_forecast_arguments(), "--drifts", drifts, "--json"], out) == 0
+    payload = json.loads(out.getvalue())
+    assert payload["drifts"] == [0.01] * 20
+    assert main([*_forecast_arguments(), "--drifts", "0.01,0.02"], io.StringIO()) == 2
+
+
+def test_forecast_refuses_a_power_law_impact() -> None:
+    """The objective is only quadratic for linear impact, which is the point."""
+    arguments = [
+        "forecast",
+        "--quantity",
+        "1000000",
+        "--horizon",
+        "1",
+        "--periods",
+        "20",
+        "--volatility",
+        "0.9",
+        "--eta",
+        "2.5e-6",
+        "--beta",
+        "0.6",
+        "--risk-aversion",
+        "2e-6",
+    ]
+    assert main(arguments, io.StringIO()) == 2

@@ -515,3 +515,111 @@ the wrong way. The validating simulation wrote its walk as
 ``cumsum(eps) - eps / 2``, which has ``Var(b_k) = k - 3/4`` rather than
 ``k - 1/2``, and the closed form read 10% high at z = -44 on two of three
 schedules. The formula was right.
+
+## Phase 16 — A schedule that can hold a view
+
+- [x] A per-period price forecast, validated, in price units per share
+- [x] The objective written in remaining holdings, so the order constraint
+      holds by construction and the forecast term telescopes to a diagonal one
+- [x] The optimum by one pass of the Thomas algorithm on a tridiagonal system
+- [x] Reduction to the Almgren-Chriss closed form at a zero forecast
+- [x] The first-order conditions checked to vanish
+- [x] The response kernel in closed form, as the Green's function of the same
+      operator, with the same urgency
+- [x] The value of a forecast in closed form, and the two consequences of its
+      being a quadratic form
+- [x] Round trips detected and reported rather than priced
+- [x] The fixed per-share cost's schedule-independence, and where it fails
+- [x] The proportional-tilt heuristic measured against the optimum
+- [x] A command-line entry point leading with the saving and what a tilt
+      recovers
+
+`execution.optimal_trajectory` assumes the price is a martingale, so the only
+reason to trade early is risk and the schedule can depend on the order and the
+stock but never on a view. This phase adds the view.
+
+The objective stays quadratic, which is why this is a solve and not a search.
+Writing the schedule as the remaining holdings `x_1 .. x_{N-1}` with `x_0 = X`
+and `x_N = 0` makes the "everything must trade" constraint hold by construction,
+and the forecast term **telescopes**:
+
+```
+sum_k n_k D_{k-1}  =  sum_{k=1}^{N-1} x_k mu_k
+```
+
+The reading is exact rather than a convenience. The shares traded in period
+`k + 1` or later are precisely the `x_k` still outstanding after period `k`, and
+every one of them pays period `k`'s drift. So the forecast enters diagonally,
+the Hessian stays tridiagonal, and the first-order conditions are a linear
+system.
+
+### Three things that fall out of the algebra
+
+**The response kernel is the Green's function of the Almgren-Chriss operator.**
+The conditions are `a (2I - S) x + c x = -mu`, whose homogeneous solutions are
+the `sinh` profiles that problem already solves for, so the inverse is known in
+closed form and is built from the *same* urgency `kappa`. The solver agrees with
+it to between 3e-15 and 2e-14 relative, at risk aversions from zero up to
+`kappa T = 5.7`. The smoothing a forecast receives is not a new parameter.
+
+It is also not an exponential decay, which is the shape to expect. At a zero
+risk aversion the `sinh` degenerate to their arguments and the kernel is exactly
+**triangular** — a tent, the Green's function of a discrete Laplacian. A spike in
+the middle of twenty periods moves the holdings by 46, 93, 139, 186 ... 476
+shares on the way in and symmetrically out, where a geometric decay would have
+given 476, 306, 196, 126.
+
+**The value of a forecast is also closed form**, `mu' G mu / 2`, agreeing with
+the solved objectives to 1.4e-12. Being a quadratic form gives two consequences
+that need no measurement. The value is **quadratic** in the forecast, confirmed
+to twelve figures. And it is therefore **identical for a forecast and its
+negative**: a signal saying "hurry" and one saying "wait" are worth exactly the
+same, to twelve figures, though the schedules they produce move in opposite
+directions. That is not what anybody expects of a trading signal.
+
+**The final period's drift cannot move anything**, because by then there is
+nothing left to trade, and `mu_N` genuinely never appears in the system.
+
+### Three measurements that came out against the guess behind them
+
+A million shares over one day in twenty periods, volatility 0.9 dollars a share
+per root day, `eta = 2.5e-6`, `gamma = 2.5e-7`, risk aversion 2e-6 — where one
+period's volatility is 20.1 cents.
+
+**The optimum is far more reluctant to round-trip than expected.** With a
+forecast reversing halfway, the unconstrained optimum first asks for a negative
+trade at a drift of **97.7 cents a share a period**, which is 4.86 times a
+period's volatility. Impact is quadratic and the forecast is linear, so buying
+shares back has to overcome a cost rising faster than the reason to. The guess
+before measuring was a fraction of one volatility. When it does happen it is
+reported, because `LinearImpact.temporary` refuses a negative rate — correctly,
+since a negative rate is a different trade and not a smaller cost.
+
+**The forecast is worth very little and a tuned heuristic captures nearly all of
+it.** Against 2 cents a period decaying linearly to zero, the optimum beats the
+forecast-blind schedule by 0.0801 basis points of the order's value at fifty
+dollars a share, and trading in proportion to the signal recovers **99.29%** of
+that.
+
+**Except on a sharp signal.** On a single-period spike the same tuned heuristic
+recovers only **63.3%**, because the optimum spreads the response and a
+proportional tilt cannot. On an alternating forecast it recovers 99.17% and on
+the reversing one 90.6%. So the case for solving this exactly is sharp isolated
+signals and it is weak otherwise, which is worth knowing before building the
+solver into anything.
+
+### A constant, and the cost that stops being one
+
+The round-tripping branch computes its objective from the quadratic form
+directly, since `schedule_cost` will not price a negative rate, and the first
+version dropped that function's own constant — `epsilon X + gamma X^2 / 2`. On
+this problem that is exactly 125,000, which made the objective incomparable with
+the blind one while looking entirely plausible.
+
+The `epsilon` half of it then deserved its own field. A fixed per-share cost is
+`epsilon X` for every schedule that trades one way, so it drops out of the
+optimisation entirely — which is what makes the quadratic solve the right problem
+rather than an approximation to it. A round trip breaks that, because shares
+traded backwards and then forwards again each pay it, so the objective
+understates the real cost and the optimum is no longer the real optimum.
+Reported, rather than quietly wrong.
