@@ -45,6 +45,12 @@ from .adaptive import (
     solve_adaptive,
     static_schedule,
 )
+from .alpha import (
+    forecast_objective,
+    forecast_schedule,
+    forecast_value,
+    proportional_tilt,
+)
 from .basket import (
     BasketProblem,
     basket_trajectory,
@@ -145,6 +151,50 @@ def build_parser() -> argparse.ArgumentParser:
     schedule.add_argument("--max-trade", type=_float_list, default=None)
     schedule.add_argument("--min-trade", type=_float_list, default=None)
     schedule.add_argument("--json", action="store_true")
+
+    forecast = sub.add_parser(
+        "forecast",
+        help="the optimal schedule under a price forecast",
+        description=(
+            "Solves the Almgren-Chriss problem with a per-period price forecast "
+            "added. Writing the schedule as the remaining holdings makes the "
+            "constraint hold by construction and the forecast term telescopes to "
+            "a diagonal one, so the optimum is a tridiagonal solve rather than a "
+            "search. The report leads with what the forecast is worth in basis "
+            "points and what share of that a tuned proportional tilt recovers, "
+            "because on a smooth forecast the answer is nearly all of it."
+        ),
+    )
+    _add_problem_arguments(forecast)
+    forecast.add_argument("--risk-aversion", type=float, required=True)
+    forecast.add_argument(
+        "--drifts",
+        type=_float_list,
+        default=None,
+        help="per-period expected price moves, comma separated, one per period",
+    )
+    forecast.add_argument(
+        "--profile",
+        choices=("flat", "decaying", "spike", "reversing"),
+        default="decaying",
+        help="a named forecast shape, used when --drifts is omitted",
+    )
+    forecast.add_argument(
+        "--drift",
+        type=float,
+        default=0.02,
+        help="size of the named profile, in price per share per period",
+    )
+    forecast.add_argument(
+        "--tilt",
+        type=float,
+        default=0.04,
+        help="strength of the proportional-tilt heuristic to compare against",
+    )
+    forecast.add_argument(
+        "--price", type=float, default=50.0, help="share price, for the basis points"
+    )
+    forecast.add_argument("--json", action="store_true")
 
     frontier = sub.add_parser("frontier", help="expected cost against risk")
     _add_problem_arguments(frontier)
@@ -724,6 +774,139 @@ def _one_or_many(values: list[float] | None) -> float | list[float] | None:
     if values is None:
         return None
     return values[0] if len(values) == 1 else values
+
+
+def _run_forecast(args: argparse.Namespace, out: TextIO) -> None:
+    """The optimal schedule under a forecast, beside the blind one it beats.
+
+    Two numbers justify the command and neither is the schedule. The saving in
+    basis points says whether the forecast is worth acting on at all -- usually
+    less than a tenth of one, which is a surprise. And the share a tuned
+    proportional tilt recovers says whether it is worth acting on *this* way:
+    nearly all of it on a smooth forecast, and much less on a sharp one, which
+    is the regime where the exact solve earns its keep.
+    """
+    impact = _impact(args)
+    if not isinstance(impact, LinearImpact):
+        raise SlippageError(
+            "a forecast schedule needs linear impact: the objective is quadratic "
+            "in the schedule, which is what makes the optimum a linear solve "
+            "rather than a search. Use the schedule command for a power law."
+        )
+    problem = ExecutionProblem(
+        quantity=args.quantity,
+        horizon=args.horizon,
+        periods=args.periods,
+        volatility=args.volatility,
+        impact=impact,
+    )
+    drifts = _forecast_of(args, problem)
+    result = forecast_schedule(problem, args.risk_aversion, drifts)
+    blind = optimal_trajectory(problem, args.risk_aversion)
+    tilted = proportional_tilt(problem, args.risk_aversion, drifts, args.tilt)
+    tilt_objective = forecast_objective(problem, args.risk_aversion, tilted, drifts)
+
+    if args.json:
+        payload = {
+            "quantity": problem.quantity,
+            "periods": problem.periods,
+            "risk_aversion": args.risk_aversion,
+            "drifts": drifts,
+            "trades": list(result.trajectory.trades),
+            "holdings": list(result.trajectory.holdings),
+            "forecast_cost": result.forecast_cost,
+            "objective": result.objective,
+            "blind_objective": result.blind_objective,
+            "saving": result.saving,
+            "saving_bps": result.saving_bps(args.price),
+            "closed_form_value": forecast_value(problem, args.risk_aversion, drifts),
+            "round_trips": result.round_trips,
+            "worst_trade": result.worst_trade,
+            "understated_fixed_cost": result.understated_fixed_cost,
+            "tilt_strength": args.tilt,
+            "tilt_objective": tilt_objective,
+            "tilt_recovered": (result.blind_objective - tilt_objective) / result.saving
+            if result.saving != 0.0
+            else 0.0,
+        }
+        json.dump(payload, out, indent=2)
+        print(file=out)
+        return
+
+    print(
+        f"{problem.quantity:,.0f} shares over {problem.periods} periods, "
+        f"risk aversion {args.risk_aversion:g}",
+        file=out,
+    )
+    print(
+        f"forecast saving {result.saving:,.2f} "
+        f"({result.saving_bps(args.price):+.4f} bps at {args.price:g})",
+        file=out,
+    )
+    print(file=out)
+    header = f"{'period':>7}{'drift':>12}{'optimal':>14}{'blind':>14}{'shift':>12}"
+    print(header, file=out)
+    print("-" * len(header), file=out)
+    for index, (trade, base) in enumerate(
+        zip(result.trajectory.trades, blind.trades, strict=True), start=1
+    ):
+        print(
+            f"{index:>7}{drifts[index - 1]:>12.5f}{trade:>14,.0f}"
+            f"{base:>14,.0f}{trade - base:>12,.0f}",
+            file=out,
+        )
+    print("-" * len(header), file=out)
+    print(
+        f"\nclosed-form value of the forecast: "
+        f"{forecast_value(problem, args.risk_aversion, drifts):,.2f}"
+        "  (mu' G mu / 2, no solve in it)",
+        file=out,
+    )
+    if result.saving != 0.0:
+        share = (result.blind_objective - tilt_objective) / result.saving
+        print(
+            f"a proportional tilt of {args.tilt:g} recovers {share:.1%} of it",
+            file=out,
+        )
+    if result.round_trips:
+        print(
+            f"\nthe optimum trades backwards: worst period "
+            f"{result.worst_trade:,.0f} shares. A negative rate is a different "
+            "trade and not a smaller cost, so the impact model refuses to price "
+            "this schedule.",
+            file=out,
+        )
+        if result.understated_fixed_cost > 0.0:
+            print(
+                f"the fixed per-share cost is no longer schedule-independent; "
+                f"the objective is short by {result.understated_fixed_cost:,.2f}",
+                file=out,
+            )
+
+
+def _forecast_of(args: argparse.Namespace, problem: ExecutionProblem) -> list[float]:
+    """Per-period drifts, from a file or from a named profile.
+
+    The profiles are here because a forecast is the one input a reader is
+    least likely to have in a file when trying the command, and because the
+    measurements worth reproducing are stated on them.
+    """
+    if args.drifts is not None:
+        values = [float(value) for value in args.drifts]
+        if len(values) != problem.periods:
+            raise SlippageError(f"--drifts has {len(values)} values for {problem.periods} periods")
+        return values
+    size = args.drift
+    periods = problem.periods
+    if args.profile == "flat":
+        return [size] * periods
+    if args.profile == "decaying":
+        return [size * (1.0 - index / periods) for index in range(periods)]
+    if args.profile == "spike":
+        middle = periods // 2
+        return [size if index == middle else 0.0 for index in range(periods)]
+    reversal = periods // 2
+    return [size if index < reversal else -size for index in range(periods)]
 
 
 def _run_schedule(args: argparse.Namespace, out: TextIO) -> None:
@@ -1455,6 +1638,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         "tca": _run_tca,
         "markouts": _run_markouts,
         "schedule": _run_schedule,
+        "forecast": _run_forecast,
         "frontier": _run_frontier,
         "basket": _run_basket,
         "transient": _run_transient,
