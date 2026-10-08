@@ -86,6 +86,13 @@ aversion 2e-6 -- where one period's volatility is 20.1 cents a share:
   zero, the optimum beats the forecast-blind schedule by 0.0801 basis points of
   the order's value at fifty dollars a share. Trading in proportion to the
   signal, with its strength tuned, recovers **99.29%** of that.
+* **A fixed per-share cost is schedule-independent until the optimum
+  round-trips.** ``epsilon X`` is the same number for every schedule that only
+  trades one way, so it drops out of the optimisation entirely -- which is what
+  makes the quadratic solve the right problem rather than an approximation to
+  it. A round trip breaks that, because shares traded backwards and then
+  forwards again each pay it, and :class:`ForecastSchedule` reports how much
+  the objective is short rather than leaving it wrong.
 * **Except where the smoothing is the whole point.** On a single-period spike
   the same tuned heuristic recovers only **63.3%**, because the optimum spreads
   the response over the horizon and a proportional tilt cannot. On an
@@ -152,6 +159,15 @@ class ForecastSchedule:
             desk usually cannot, and the impact model refuses a negative rate,
             so this is reported rather than clipped away.
         worst_trade: The most negative trade, or zero when there is none.
+        understated_fixed_cost: ``epsilon`` times twice the quantity traded
+            backwards. The quadratic solve treats the fixed per-share cost as
+            schedule-independent, which is exact for any schedule that only
+            trades one way -- it is then ``epsilon X`` whatever the schedule.
+            A round trip breaks that, because the shares traded backwards and
+            then forwards again each pay it. So the objective understates the
+            true cost by this much, and the optimum is no longer the optimum of
+            the real problem. Zero whenever ``epsilon`` is zero or the schedule
+            does not round-trip, which is the usual case.
     """
 
     trajectory: Trajectory
@@ -160,6 +176,7 @@ class ForecastSchedule:
     blind_objective: float
     round_trips: bool
     worst_trade: float
+    understated_fixed_cost: float = 0.0
 
     @property
     def saving(self) -> float:
@@ -279,12 +296,17 @@ def forecast_schedule(
             risk_aversion=risk_aversion,
         )
         held = trajectory.holdings
-        objective = (
-            0.5 * impact * math.fsum((held[k] - held[k + 1]) ** 2 for k in range(periods))
-            + 0.5 * risk * math.fsum(held[k + 1] ** 2 for k in range(periods))
-            + math.fsum(held[k + 1] * drift[k] for k in range(periods - 1))
-        )
         carried = math.fsum(held[k + 1] * drift[k] for k in range(periods - 1))
+        # schedule_cost's total is epsilon X + gamma X^2 / 2 plus
+        # (eta_tilde / tau) sum n^2, so the constant has to be carried here or
+        # this objective is not comparable with the blind one.
+        constant = problem.impact.epsilon * quantity + 0.5 * problem.impact.gamma * quantity**2
+        objective = (
+            constant
+            + 0.5 * impact * math.fsum((held[k] - held[k + 1]) ** 2 for k in range(periods))
+            + 0.5 * risk * math.fsum(held[k + 1] ** 2 for k in range(periods))
+            + carried
+        )
     else:
         trajectory = trajectory_from_trades(problem, trades, risk_aversion=risk_aversion)
         carried = math.fsum(trajectory.holdings[k + 1] * drift[k] for k in range(periods - 1))
@@ -292,6 +314,7 @@ def forecast_schedule(
 
     blind = optimal_trajectory(problem, risk_aversion)
     blind_objective = forecast_objective(problem, risk_aversion, blind.trades, drift)
+    backwards = -math.fsum(trade for trade in trades if trade < 0.0)
     return ForecastSchedule(
         trajectory=trajectory,
         forecast_cost=carried,
@@ -299,6 +322,7 @@ def forecast_schedule(
         blind_objective=blind_objective,
         round_trips=round_trips,
         worst_trade=min(worst, 0.0),
+        understated_fixed_cost=2.0 * problem.impact.epsilon * backwards,
     )
 
 
