@@ -1060,6 +1060,95 @@ slippage vwap --quantity 1000000 --volatility 0.004 --price 50 --bucket-hours 0.
   --concentration 60 --eta 2e-6 --risk-aversion 0 1000 1000000
 ```
 
+## A schedule that can hold a view
+
+`execution.optimal_trajectory` assumes a martingale, so the only reason to
+trade early is risk and the schedule can never express a forecast.
+`slippage.alpha` adds one, and the objective stays quadratic — writing the
+schedule as the remaining holdings makes the order constraint hold by
+construction, and the forecast term telescopes to `sum_k x_k mu_k`, because the
+shares outstanding after period `k` are exactly the ones that pay period `k`'s
+drift. So the optimum is one pass of the Thomas algorithm, not a search.
+
+```bash
+slippage forecast --quantity 1000000 --horizon 1 --periods 20 \
+    --volatility 0.9 --eta 2.5e-6 --gamma 2.5e-7 --risk-aversion 2e-6
+```
+
+```
+1,000,000 shares over 20 periods, risk aversion 2e-06
+forecast saving 400.35 (+0.0801 bps at 50)
+
+ period       drift       optimal         blind       shift
+-----------------------------------------------------------
+      1     0.02000        60,862        59,588       1,274
+      2     0.01900        59,137        58,061       1,075
+    ...
+     19     0.00200        44,366        45,056        -691
+     20     0.00100        44,274        44,983        -710
+-----------------------------------------------------------
+
+closed-form value of the forecast: 400.35  (mu' G mu / 2, no solve in it)
+a proportional tilt of 0.04 recovers 99.3% of it
+```
+
+That last line is the honest headline, and it is why the command prints it.
+
+### Three things fall out of the algebra
+
+**The response kernel is the Green's function of the Almgren-Chriss operator.**
+The first-order conditions are `a (2I - S) x + c x = -mu`, whose homogeneous
+solutions are the `sinh` profiles that problem already solves for, so the
+inverse is closed form and is built from the *same* urgency `kappa`. The solver
+agrees with it to between 3e-15 and 2e-14 across risk aversions from zero up to
+`kappa T = 5.7`. The smoothing a forecast receives is not a new parameter.
+
+It is not an exponential decay either. At a zero risk aversion the kernel is
+exactly **triangular** — a tent, the Green's function of a discrete Laplacian. A
+spike in the middle of twenty periods moves the holdings by 46, 93, 139, 186 ...
+476 shares on the way in and symmetrically out, where a geometric decay would
+have given 476, 306, 196, 126.
+
+**The value of a forecast is closed form too**, `mu' G mu / 2`, agreeing with
+the solved objectives to 1.4e-12. Being a quadratic form, the value is
+quadratic in the forecast — and therefore **identical for a forecast and its
+negative**, to twelve figures, even though the schedules they produce move in
+opposite directions. A signal saying "hurry" and one saying "wait" are worth the
+same, which is not what anybody expects of a trading signal.
+
+**The final period's drift cannot move anything**, because by then there is
+nothing left to trade.
+
+### Three measurements that went against the guess
+
+**The optimum is far more reluctant to round-trip than expected.** With a
+forecast reversing halfway, the unconstrained optimum first asks for a negative
+trade at **97.7 cents a share a period** — 4.86 times a period's volatility.
+Impact is quadratic and the forecast linear, so buying shares back must overcome
+a cost rising faster than the reason to. When it does happen it is reported,
+because `LinearImpact.temporary` refuses a negative rate, correctly: a negative
+rate is a different trade and not a smaller cost.
+
+**The forecast is worth very little and a tuned tilt captures nearly all of
+it** — 0.0801 basis points, 99.29% recovered. **Except on a sharp signal**, where
+the tilt recovers only 63.3% of a single-period spike's value because the
+optimum spreads the response and a tilt cannot. So the case for solving this
+exactly is sharp isolated signals, and it is weak otherwise.
+
+### A constant, and the cost that stops being one
+
+The round-tripping branch takes its objective from the quadratic form directly,
+since `schedule_cost` will not price a negative rate, and the first version
+dropped that function's own constant, `epsilon X + gamma X^2 / 2`. On this
+problem that is exactly 125,000 — an objective incomparable with the blind one
+while looking entirely plausible.
+
+The `epsilon` half then earned its own field. A fixed per-share cost is
+`epsilon X` for *any* schedule that trades one way, so it drops out of the
+optimisation, which is what makes the quadratic solve the right problem rather
+than an approximation to it. A round trip breaks that, because shares traded
+backwards and then forwards each pay it. Reported, rather than quietly wrong.
+
 ## Layout
 
 | module | contents |
