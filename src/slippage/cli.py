@@ -57,6 +57,16 @@ from .basket import (
     compare_to_independent,
     hedge_direction,
 )
+from .capacity import (
+    Capacity,
+    Mandate,
+    UnboundedCapacityError,
+    alpha_floor,
+    break_even_at_horizon,
+    break_even_at_participation,
+    break_even_continuum,
+    uniform_optimal_horizon,
+)
 from .exceptions import SlippageError, ValidationError
 from .execution import ExecutionProblem, efficient_frontier, optimal_trajectory
 from .impact import ImpactModel, LinearImpact, PowerLawImpact
@@ -562,6 +572,60 @@ def build_parser() -> argparse.ArgumentParser:
         help="score another schedule, such as an arrival-price trajectory, against VWAP",
     )
     vwap.add_argument("--json", action="store_true")
+
+    capacity = sub.add_parser(
+        "capacity",
+        help="the size at which executing the trade consumes the alpha",
+        description=(
+            "Reports the break-even size under both conventions in use, because "
+            "they disagree about what limits capacity. Holding the horizon fixed "
+            "makes cost per share linear in the size. Holding the participation "
+            "rate fixed makes the temporary impact per share constant in the size, "
+            "so it sets a floor on the alpha required rather than a limit on the "
+            "size, and the permanent impact sets the limit. A rate whose floor is "
+            "above the alpha has no capacity at any size, and no horizon rescues "
+            "it, because the rate is what chose the horizon."
+        ),
+    )
+    capacity.add_argument(
+        "--alpha", type=float, required=True, help="expected gain per share, in price units"
+    )
+    capacity.add_argument(
+        "--volume", type=float, required=True, help="volume per unit time, in shares"
+    )
+    capacity.add_argument(
+        "--volatility",
+        type=float,
+        required=True,
+        help="price volatility per square root of the time unit, in price units",
+    )
+    capacity.add_argument("--gamma", type=float, default=0.0, help="permanent impact per share")
+    capacity.add_argument("--eta", type=float, required=True, help="temporary impact coefficient")
+    capacity.add_argument("--epsilon", type=float, default=0.0, help="fixed cost per share")
+    capacity.add_argument(
+        "--horizon", type=float, default=1.0, help="the horizon to hold fixed, in time units"
+    )
+    capacity.add_argument(
+        "--participations",
+        type=_float_list,
+        default=[0.02, 0.05, 0.10, 0.25],
+        help="participation rates to tabulate, as fractions of volume",
+    )
+    capacity.add_argument(
+        "--periods-per-unit-time",
+        dest="periods_per_unit_time",
+        type=int,
+        default=390,
+        help="trading intervals in one unit of time",
+    )
+    capacity.add_argument(
+        "--risk-aversion",
+        dest="risk_aversion",
+        type=float,
+        default=0.0,
+        help="mean-variance penalty; a positive value also reports an optimal horizon",
+    )
+    capacity.add_argument("--json", action="store_true")
 
     sample = sub.add_parser("sample-data", help="write a synthetic book to CSV")
     sample.add_argument("--out", type=Path, required=True)
@@ -1631,6 +1695,121 @@ def _run_placement(args: argparse.Namespace, out: TextIO) -> None:
         )
 
 
+def _run_capacity(args: argparse.Namespace, out: TextIO) -> None:
+    """Break-even size under both conventions, which disagree about the limit.
+
+    Prints the fixed-horizon capacity, then the participation table with the
+    alpha floor beside each rate, because the floor is the number that decides
+    whether a rate is viable at all and no horizon rescues a rate above it.
+    """
+    mandate = Mandate(
+        alpha=args.alpha,
+        volume=args.volume,
+        volatility=args.volatility,
+        impact=LinearImpact(gamma=args.gamma, eta=args.eta, epsilon=args.epsilon),
+        periods_per_unit_time=args.periods_per_unit_time,
+        risk_aversion=args.risk_aversion,
+    )
+    payload: dict[str, object] = {
+        "alpha": mandate.alpha,
+        "volume": mandate.volume,
+        "risk_aversion": mandate.risk_aversion,
+    }
+
+    fixed = break_even_at_horizon(mandate, args.horizon, uniform=True)
+    payload["fixed_horizon"] = {
+        "horizon": fixed.horizon,
+        "quantity": fixed.quantity,
+        "volume_days": fixed.volume_days,
+        "cost_per_share": fixed.cost_per_share,
+        "continuum": break_even_continuum(mandate, horizon=args.horizon),
+    }
+
+    rates: list[tuple[float, float, Capacity | None]] = []
+    for participation in args.participations:
+        floor = alpha_floor(mandate, participation)
+        try:
+            rates.append(
+                (participation, floor, break_even_at_participation(mandate, participation))
+            )
+        except UnboundedCapacityError:
+            rates.append((participation, floor, None))
+    payload["participation"] = [
+        {
+            "participation": rate,
+            "alpha_floor": floor,
+            "quantity": None if found is None else found.quantity,
+            "volume_days": None if found is None else found.volume_days,
+            "horizon": None if found is None else found.horizon,
+            "headroom": None if found is None else found.headroom,
+        }
+        for rate, floor, found in rates
+    ]
+
+    if mandate.risk_aversion > 0.0:
+        best = uniform_optimal_horizon(mandate, fixed.quantity)
+        payload["optimal_horizon"] = {
+            "horizon": best.horizon,
+            "half_life": best.half_life,
+            "half_lives": best.half_lives,
+            "net_alpha": best.net_alpha,
+            "interior": best.interior,
+        }
+
+    if args.json:
+        print(json.dumps(payload, indent=2, default=float), file=out)
+        return
+
+    print(
+        f"alpha {mandate.alpha:.6f} per share, volume {mandate.volume:,.0f} per period",
+        file=out,
+    )
+    print(
+        f"at a fixed horizon of {fixed.horizon:g}: {fixed.quantity:,.0f} shares "
+        f"= {fixed.volume_days:.3f} periods of volume, costing {fixed.cost_per_share:.6f}",
+        file=out,
+    )
+    continuum = break_even_continuum(mandate, horizon=args.horizon)
+    reason = (
+        "the 1 - 1/N on the permanent term"
+        if mandate.risk_aversion == 0.0
+        else "mostly the risk penalty, which the continuum expression does not carry"
+    )
+    print(
+        f"  the continuum formula says {continuum:,.0f}, which is "
+        f"{continuum / fixed.quantity - 1.0:+.6f} of it: {reason}",
+        file=out,
+    )
+    print(file=out)
+    print(
+        f"  {'rate':>6}  {'alpha floor':>12}  {'capacity':>14}  {'periods':>9}  {'horizon':>9}",
+        file=out,
+    )
+    for rate, floor, found in rates:
+        if found is None:
+            print(f"  {rate:>5.1%}  {floor:>12.6f}  {'none':>14}  {'-':>9}  {'-':>9}", file=out)
+        else:
+            print(
+                f"  {rate:>5.1%}  {floor:>12.6f}  {found.quantity:>14,.0f}  "
+                f"{found.volume_days:>9.2f}  {found.horizon:>9.2f}",
+                file=out,
+            )
+    print(
+        "  a rate whose floor is above the alpha has no capacity at any size: the "
+        "temporary impact of the rate itself is already the whole edge",
+        file=out,
+    )
+    if mandate.risk_aversion > 0.0:
+        best = uniform_optimal_horizon(mandate, fixed.quantity)
+        print(file=out)
+        print(
+            f"the horizon that maximises net alpha is {best.horizon:.4f}, which is "
+            f"{best.half_lives:.4f} half-lives of {best.half_life:.4f} -- and it does "
+            "not depend on the size at all",
+            file=out,
+        )
+
+
 def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     stream = sys.stdout if out is None else out
     args = build_parser().parse_args(argv)
@@ -1645,6 +1824,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         "adaptive": _run_adaptive,
         "placement": _run_placement,
         "vwap": _run_vwap,
+        "capacity": _run_capacity,
         "sample-data": _run_sample,
     }
     try:
