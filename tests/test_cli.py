@@ -980,3 +980,89 @@ def test_forecast_refuses_a_power_law_impact() -> None:
         "2e-6",
     ]
     assert main(arguments, io.StringIO()) == 2
+
+
+CAPACITY_ARGS = [
+    "capacity",
+    "--alpha",
+    "0.05",
+    "--volume",
+    "5000000",
+    "--volatility",
+    "0.30",
+    "--gamma",
+    "2e-8",
+    "--eta",
+    "1e-7",
+    "--epsilon",
+    "0.005",
+]
+
+
+def test_capacity_tabulates_both_conventions() -> None:
+    """The table is the command: the rates whose floor exceeds the alpha have no
+    capacity at any size, and that has to read as a conclusion rather than as a
+    blank."""
+    code, text = run(*CAPACITY_ARGS)
+    assert code == 0
+    assert "at a fixed horizon of 1" in text
+    assert "alpha floor" in text
+    assert "none" in text
+    assert "the 1 - 1/N on the permanent term" in text
+    lines = [
+        one
+        for one in text.splitlines()
+        if one.strip().startswith(("2.0%", "5.0%", "10.0%", "25.0%"))
+    ]
+    assert len(lines) == 4
+    # The two viable rates carry a capacity and the two above the floor do not.
+    assert "none" not in lines[0] and "none" not in lines[1]
+    assert "none" in lines[2] and "none" in lines[3]
+
+
+def test_capacity_emits_json_with_both_conventions_in_it() -> None:
+    code, text = run(*CAPACITY_ARGS, "--json")
+    assert code == 0
+    payload = json.loads(text)
+    assert payload["fixed_horizon"]["cost_per_share"] == pytest.approx(0.05, rel=1e-9)
+    rows = payload["participation"]
+    assert len(rows) == 4
+    assert rows[0]["quantity"] is not None
+    assert rows[3]["quantity"] is None
+    assert rows[3]["alpha_floor"] > payload["alpha"]
+    # A patient rate has more capacity and a longer horizon than a fast one.
+    assert rows[0]["quantity"] > rows[1]["quantity"]
+    assert rows[0]["horizon"] > rows[1]["horizon"]
+    assert "optimal_horizon" not in payload
+
+
+def test_capacity_reports_an_optimal_horizon_only_with_a_risk_penalty() -> None:
+    code, text = run(*CAPACITY_ARGS, "--json", "--risk-aversion", "1e-8")
+    assert code == 0
+    payload = json.loads(text)
+    best = payload["optimal_horizon"]
+    assert best["half_lives"] == pytest.approx(math.sqrt(3.0), rel=3e-3)
+    assert best["interior"] is True
+    # And the continuum comparison stops blaming the interval count, because
+    # with a risk penalty that is not what the difference is.
+    code, plain = run(*CAPACITY_ARGS, "--risk-aversion", "1e-8")
+    assert code == 0
+    assert "mostly the risk penalty" in plain
+    assert "does not depend on the size at all" in plain
+
+
+def test_capacity_refuses_an_alpha_below_the_commission() -> None:
+    code, _ = run(
+        "capacity",
+        "--alpha",
+        "0.004",
+        "--volume",
+        "5000000",
+        "--volatility",
+        "0.30",
+        "--eta",
+        "1e-7",
+        "--epsilon",
+        "0.005",
+    )
+    assert code == 2

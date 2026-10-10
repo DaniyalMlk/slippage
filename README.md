@@ -1149,6 +1149,78 @@ optimisation, which is what makes the quadratic solve the right problem rather
 than an approximation to it. A round trip breaks that, because shares traded
 backwards and then forwards each pay it. Reported, rather than quietly wrong.
 
+## The size at which the cost consumes the reason
+
+Everything above answers "given this size, how should it be traded?".
+`slippage.capacity` answers the question before it: **how large can the order be
+at all?**
+
+```console
+$ slippage capacity --alpha 0.05 --volume 5e6 --volatility 0.30 \
+    --gamma 2e-8 --eta 1e-7 --epsilon 0.005
+alpha 0.050000 per share, volume 5,000,000 per period
+at a fixed horizon of 1: 409,186 shares = 0.082 periods of volume, costing 0.050000
+  the continuum formula says 409,091, which is -0.000233 of it: the 1 - 1/N on the permanent term
+
+    rate   alpha floor        capacity    periods    horizon
+   2.0%      0.015000       3,501,751       0.70      35.02
+   5.0%      0.030000       2,001,001       0.40       8.00
+  10.0%      0.055000            none          -          -
+  25.0%      0.130000            none          -          -
+```
+
+### The two conventions disagree about what limits capacity
+
+A model fixes the horizon. A trader quotes participation, which fixes the *rate*
+and lets the horizon grow with the size. At a fixed horizon temporary impact per
+share is `eta X / T`, so cost per share is linear in the size. At a fixed
+participation rate it is `eta rho V` — **constant in the size** — so it does not
+bound capacity at all: it sets a floor on the alpha required, and the permanent
+impact sets the size limit.
+
+The log-log slope of cost per share against size is 1.0000 at every decade with
+the horizon fixed, and **0.015, 0.129, 0.553, 0.914** across four decades at 5%
+participation: zero where the floor dominates, approaching one only once the
+permanent term takes over. Remove the permanent impact and the
+fixed-participation cost per share is 0.03000000 at a million shares, at a
+billion and at a trillion — the same eight digits, capacity genuinely unbounded,
+and raised as such rather than returned as the ceiling.
+
+### The alpha floor is the number to check first
+
+At those parameters a 10% participation rate needs 5.50 cents a share before any
+size is viable and 25% needs 13.00, against an alpha of 5.00. Those rates have
+**no capacity whatsoever**, and no amount of patience about the horizon changes
+it, because patience is what the rate has already spent. The fixed per-share
+cost enters the floor too, so a half-cent commission that looks negligible
+against a five-cent edge is a third of the floor at 2% participation.
+
+### The horizon that maximises net alpha does not depend on the order size
+
+For a uniform schedule every term carrying `T` carries the same `X^2`, so the
+optimum is `sqrt(3 eta_tilde / (lambda sigma^2))` with no size in it. Measured
+at 500,000, two million and twenty million shares across four orders of
+magnitude of risk aversion: agreement to **1.3e-07** at worst. Not bit for bit,
+and the residual is not slack in the invariance — the objective's magnitude goes
+as `X^2`, so near a flat optimum the search's comparisons are decided by
+rounding and a fortyfold range of size moves the eighth significant figure. A
+desk that lengthens its horizon because the order is larger is responding to the
+wrong variable.
+
+That optimum is `sqrt(3)` times the Almgren-Chriss half-life, since
+`kappa = sqrt(lambda sigma^2 / eta_tilde)` over the same ratio — measured at
+1.7352, 1.7335, 1.7330 and 1.7322 half-lives against `sqrt(3) = 1.7321`.
+
+### And the optimal schedule has no optimal horizon
+
+Net alpha under the Almgren-Chriss schedule rises monotonically in the nominal
+horizon and saturates (10,348 at twenty, 12,139 at fifty, 12,238 at a hundred,
+12,422 at two hundred) while the half-life it actually trades over barely moves
+(10.536 down to 10.488). The risk aversion has already chosen the effective
+horizon, so `uniform_optimal_horizon` reports an interior optimum for the
+uniform schedule and the module says plainly that the optimal schedule has none,
+rather than returning whichever point a search happened to stop at.
+
 ## Layout
 
 | module | contents |

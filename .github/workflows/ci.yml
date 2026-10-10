@@ -67,6 +67,8 @@ jobs:
           /tmp/clean/bin/slippage basket --holdings /tmp/holdings.csv --covariance /tmp/cov.csv --risk-aversion 1e-5 --json > /dev/null
           /tmp/clean/bin/slippage adaptive --quantity 1e6 --horizon 1 --periods 20 --gamma 2.5e-7 --eta 2.5e-6 --illiquid-eta 1.25e-5 --volatility 0.3 --persistence 0.8 --risk-aversion 2e-6 --draws 200 --seed 1
           /tmp/clean/bin/slippage adaptive --quantity 1e6 --horizon 1 --periods 20 --gamma 2.5e-7 --eta 2.5e-6 --illiquid-eta 1.25e-5 --volatility 0.3 --persistence 1.0 --json > /dev/null
+          /tmp/clean/bin/slippage capacity --alpha 0.05 --volume 5e6 --volatility 0.30 --gamma 2e-8 --eta 1e-7 --epsilon 0.005
+          /tmp/clean/bin/slippage capacity --alpha 0.05 --volume 5e6 --volatility 0.30 --gamma 2e-8 --eta 1e-7 --epsilon 0.005 --risk-aversion 1e-8 --json > /dev/null
       # These assertions read License-Expression, License-File and the
       # classifiers out of dist-info. In the test job that dist-info belongs to
       # an editable install, written once and able to agree with a
