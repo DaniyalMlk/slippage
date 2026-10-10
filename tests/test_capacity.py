@@ -523,3 +523,15 @@ def test_everything_returned_is_finite() -> None:
     horizon = uniform_optimal_horizon(mandate(risk_aversion=1e-8), 1e6)
     for value in (horizon.horizon, horizon.net_alpha, horizon.half_life, horizon.half_lives):
         assert math.isfinite(value)
+
+
+def test_the_figures_printed_in_the_readme() -> None:
+    """The console block in the README, pinned to the digits that are in print."""
+    fixed = break_even_at_horizon(BASE, 1.0, uniform=True)
+    assert f"{fixed.quantity:,.0f}" == "409,186"
+    assert f"{break_even_continuum(BASE, horizon=1.0):,.0f}" == "409,091"
+    assert f"{break_even_continuum(BASE, horizon=1.0) / fixed.quantity - 1.0:+.6f}" == "-0.000233"
+    assert f"{break_even_at_participation(BASE, 0.02).quantity:,.0f}" == "3,501,751"
+    assert f"{break_even_at_participation(BASE, 0.05).quantity:,.0f}" == "2,001,001"
+    assert f"{alpha_floor(BASE, 0.10):.6f}" == "0.055000"
+    assert f"{alpha_floor(BASE, 0.25):.6f}" == "0.130000"

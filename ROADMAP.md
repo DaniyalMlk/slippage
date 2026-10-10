@@ -623,3 +623,89 @@ rather than an approximation to it. A round trip breaks that, because shares
 traded backwards and then forwards again each pay it, so the objective
 understates the real cost and the optimum is no longer the real optimum.
 Reported, rather than quietly wrong.
+
+## Phase 17 — The size at which the cost consumes the reason
+
+Every phase above answers "given this size, how should it be traded?". None
+answers the question before it: how large can the order be at all? A strategy's
+edge is a number of cents a share, executing spends some of it, and past a size
+executing spends all of it. That size is the strategy's capacity and it is the
+number an allocation decision turns on.
+
+- [x] Break-even size with the horizon held fixed, in closed form, because the
+      objective is exactly quadratic in the size
+- [x] Break-even size with the participation rate held fixed, where the horizon
+      moves with the size and the solve is a bisection on the library's own cost
+- [x] The alpha floor: the per-share cost no size can reduce at a given rate
+- [x] An optimal horizon for a uniform schedule, and the statement that the
+      optimal schedule has none
+- [x] A capacity curve and the elasticity of cost per share to size
+- [x] A command-line route that tabulates both conventions together
+- [ ] A first release on the package index
+
+### The two conventions disagree about what limits capacity
+
+A model fixes the horizon. A trader quotes participation, which fixes the rate
+and lets the horizon grow with the size. Those are different functions of size
+and the difference is not a detail. At a fixed horizon the temporary impact per
+share is `eta X / T` and cost per share is linear in the size. At a fixed
+participation rate it is `eta rho V`, **constant in the size**, so it does not
+bound capacity at all: it sets a floor on the alpha required, and the permanent
+impact sets the size limit.
+
+Measured as the log-log slope of cost per share against size: 1.0000 at every
+decade with the horizon fixed, and 0.015, 0.129, 0.553, 0.914 across four
+decades at 5% participation — zero where the floor dominates, approaching one
+only once the permanent term has taken over. With the permanent impact removed
+the fixed-participation cost per share is 0.03000000 at a million shares, at a
+billion and at a trillion: the same eight digits, and capacity genuinely
+unbounded. That is raised rather than returned as the ceiling, because the
+ceiling is an argument.
+
+### The alpha floor is the number to check first
+
+At the worked parameters a 10% participation rate needs 5.50 cents a share
+before any size is viable and a 25% rate needs 13.00, against an alpha of 5.00.
+At those rates the strategy has no capacity whatsoever and no amount of patience
+about the horizon changes it, because patience is what the rate has already
+spent. The fixed per-share cost enters the floor too, so a half-cent commission
+that looks negligible against a five-cent edge is a third of the floor at 2%
+participation.
+
+### The horizon that maximises net alpha does not depend on the order size
+
+For a uniform schedule the objective is
+`(alpha - epsilon) X - eta X^2 / T - gamma X^2 / 2 - lambda sigma^2 X^2 T / 3`,
+in which every term carrying `T` carries the same `X^2`, so the optimum is
+`sqrt(3 eta_tilde / (lambda sigma^2))` with no size in it. Measured at 500,000,
+two million and twenty million shares across four orders of magnitude of risk
+aversion: agreement to 1.3e-07 at worst. Not bit for bit, and the residual is
+not slack in the invariance — the objective's magnitude goes as `X^2`, so near a
+flat optimum the search's comparisons are decided by rounding and a fortyfold
+range of size moves the eighth significant figure. A desk that lengthens its
+horizon because the order is larger is responding to the wrong variable.
+
+That optimum is `sqrt(3)` times the Almgren-Chriss half-life, since
+`kappa = sqrt(lambda sigma^2 / eta_tilde)` over the same ratio: measured at
+1.7352, 1.7335, 1.7330 and 1.7322 half-lives as the risk aversion rises through
+four decades, against `sqrt(3) = 1.7321`.
+
+### The optimal schedule has no optimal horizon, because it declines the time
+
+Net alpha under the Almgren-Chriss schedule rises monotonically in the nominal
+horizon and saturates — 10,348 at twenty, 12,139 at fifty, 12,238 at a hundred,
+12,422 at two hundred — while the half-life it actually trades over barely moves,
+10.536 down to 10.488. The risk aversion has already chosen the effective
+horizon. So the module reports an interior optimum for the uniform schedule and
+says plainly that the optimal schedule has none, rather than returning whichever
+point a search happened to stop at.
+
+### Two things the discretisation did rather than the model
+
+The interval count is capped, which has consequences worth stating rather than
+hiding. The continuum break-even sits 0.017% to 0.033% below the exact one at a
+fixed horizon, and **exactly** `-1/N` below it at a fixed participation rate,
+where the horizon is long enough that the count is on its cap and the single
+`1 - 1/N` factor is the whole discrepancy. And the risk-neutral cost does not
+reach the permanent impact as the horizon grows: at a thousand units of time
+`tau` is half a unit and the temporary term is still 95 of the 15,095.
