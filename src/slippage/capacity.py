@@ -42,22 +42,30 @@ Cost is ``epsilon X + A X^2`` with ``A`` free of the size — true of the
 mean-variance objective too, since the variance is also exactly quadratic — so
 the break-even is ``(alpha - epsilon) / A``. Checked against a bisection on the
 library's own cost at 1e-15 relative across four horizons. The continuum
-expression that drops the ``1 - 1/N`` sits 0.017% to 0.033% below it, which is
-small and is the kind of small that should be known rather than assumed.
+expression that drops the ``1 - 1/N`` sits 0.017% to 0.033% below it at a fixed
+horizon, and **exactly** ``-1/N`` below it at a fixed participation rate, where
+the horizon is long enough that the interval count sits on its cap and the one
+factor is the whole of the discrepancy: -0.000500 at 2% participation and at
+5%, to six decimals, against a cap of 2000 intervals.
 
 **The horizon that maximises net alpha does not depend on the order size.** For
 a uniform schedule the objective is
 ``(alpha - epsilon) X - eta X^2 / T - gamma X^2 / 2 - lambda sigma^2 X^2 T / 3``,
 in which every term in ``T`` carries the same ``X^2``, so the optimum is
 ``T* = sqrt(3 eta_tilde / (lambda sigma^2))`` with no size in it. Confirmed
-numerically at 500,000, two million and twenty million shares: the same optimum
-to three decimals, across a fortyfold range of size and four orders of magnitude
-of risk aversion. A desk that lengthens its horizon because the order is larger
-is responding to the wrong variable.
+numerically at 500,000, two million and twenty million shares: the optimum is
+**bit for bit the same number** at all three, across a fortyfold range of size
+and four orders of magnitude of risk aversion, and it matches the closed form to
+3.8e-04, which is the golden-section search's own resolution. A desk that
+lengthens its horizon because the order is larger is responding to the wrong
+variable.
 
-That optimum is exactly ``sqrt(3)`` times the Almgren-Chriss half-life
-``1 / kappa``, since ``kappa = sqrt(lambda sigma^2 / eta_tilde)`` in the
-continuum. Which explains the other half of the measurement:
+That optimum is ``sqrt(3)`` times the Almgren-Chriss half-life ``1 / kappa``,
+since ``kappa = sqrt(lambda sigma^2 / eta_tilde)`` in the continuum — measured
+at 1.7352, 1.7335, 1.7330 and 1.7322 half-lives as the risk aversion rises
+through four decades, against ``sqrt(3) = 1.7321``, approaching it as the
+intervals shorten relative to the horizon. Which explains the other half of the
+measurement:
 
 **For the Almgren-Chriss optimal schedule there is no interior optimal horizon,
 because the schedule declines the extra time.** Net alpha rises monotonically in
@@ -74,9 +82,10 @@ participation rate needs 5.50 cents a share of edge before any size is viable
 and a 25% rate needs 13.00 cents, against an alpha of 5.00 cents: at those rates
 the strategy has no capacity whatsoever, and no amount of patience about the
 horizon changes it, because patience is what participation has already spent.
-The fixed per-share cost enters the floor too, which is why a commission that
-looks negligible against a 5 cent edge is 10% of the floor at 2%
-participation.
+The fixed per-share cost enters the floor too, which is why a half-cent
+commission that looks negligible against a 5 cent edge is a third of the floor
+at 2% participation, and the thing that decides whether a patient strategy
+clears it at all.
 """
 
 from __future__ import annotations
