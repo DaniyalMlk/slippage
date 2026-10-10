@@ -53,10 +53,13 @@ a uniform schedule the objective is
 ``(alpha - epsilon) X - eta X^2 / T - gamma X^2 / 2 - lambda sigma^2 X^2 T / 3``,
 in which every term in ``T`` carries the same ``X^2``, so the optimum is
 ``T* = sqrt(3 eta_tilde / (lambda sigma^2))`` with no size in it. Confirmed
-numerically at 500,000, two million and twenty million shares: the optimum is
-**bit for bit the same number** at all three, across a fortyfold range of size
-and four orders of magnitude of risk aversion, and it matches the closed form to
-3.8e-04, which is the golden-section search's own resolution. A desk that
+numerically at 500,000, two million and twenty million shares across four
+orders of magnitude of risk aversion: the optimum agrees to **1.3e-07 at
+worst**, and it matches the closed form to 3.8e-04, which is the golden-section
+search's own resolution. The residual spread across sizes is not slack in the
+invariance, which is exact in the algebra; it is the search's comparisons being
+decided by rounding in an objective whose magnitude goes as ``X^2``, so a
+fortyfold range of size moves the answer in its eighth significant figure. A desk that
 lengthens its horizon because the order is larger is responding to the wrong
 variable.
 
