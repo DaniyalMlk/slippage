@@ -709,3 +709,71 @@ where the horizon is long enough that the count is on its cap and the single
 `1 - 1/N` factor is the whole discrepancy. And the risk-neutral cost does not
 reach the permanent impact as the horizon grows: at a thousand units of time
 `tau` is half a unit and the temporary term is still 95 of the 15,095.
+
+## Phase 18 — What a schedule built on the wrong parameters costs
+
+- [x] The urgency ratio `lambda sigma^2 / eta_tilde`, and the invariance that
+      makes it the only thing a schedule sees
+- [x] The regret of a schedule built on believed parameters and paid for under
+      true ones, exact for the discrete problem
+- [x] The cost forecast's error reported beside it, because the two are of
+      different orders
+- [x] The continuous-time closed form, as a limit to check the discrete figure
+      against
+- [x] The ceiling on the regret's coefficient, and the quartic decay in the
+      horizon measured in half-lives
+- [x] A minimax urgency over a stated range of possible truths, beside what a
+      point estimate would have guaranteed
+- [x] A `robust` command, and the whole lot in JSON
+
+### A three-dimensional question that is one-dimensional
+
+The mean-variance objective of an arbitrary schedule splits into a term no
+schedule can change, `epsilon X + gamma X^2 / 2`, and `eta_tilde` times
+`sum n^2 / tau + r tau sum x^2` with `r = lambda sigma^2 / eta_tilde`. So the
+trades depend on the three parameters and the risk aversion only through `r`:
+two sets of beliefs with the same ratio produce identical trades to the last bit,
+and the fixed per-share cost does not enter at all. An error in the impact
+coefficient and an error in the variance rate are the same error, and the tests
+assert that rather than the prose claiming it.
+
+### The number that surprises, and the number that should not
+
+The schedule sits at a minimum, so a first-order error in it costs a
+second-order amount; the cost forecast has no such protection. A 10% error in the
+ratio makes the forecast 3.4% wrong and the trades 0.038% wrong, and the gap
+widens without bound as the estimate improves — 16 times at a 50% error, 88 at
+10%, 876 at 1%. Both exponents are measured by a log-log slope: 2.00 and 1.00.
+
+### How much it can ever cost
+
+In the urgent limit the relative regret is `(sqrt(k) - 1)^2 / (2 sqrt(k))` for a
+ratio believed `k` times its true value, so the quadratic coefficient is exactly
+`1/8` and a factor-of-two error costs 6.07%. That is a ceiling: expanding the
+objective in both arguments gives `(a^2 - y^2)^2 / 45`, so the coefficient falls
+like `y^4 / 45` for a patient trader — 2.2e-6 at a tenth of a half-life against
+0.125 above eight of them. The derivation and the measurement were done
+separately and the first attempt at the small-urgency coefficient, `1/48`, was
+wrong; the expansion settled it.
+
+### The asymmetry, read twice
+
+The urgent-limit form is symmetric under `k -> 1/k`, and at finite urgency it is
+not. The coefficient rises with urgency, so the costly configuration is always
+the more urgent one. For a fixed truth, believing the ratio 1.5 times too large
+costs 1.70 times believing it 1.5 times too small. For a fixed belief, a truth
+1.5 times higher costs 1.47 times a truth 1.5 times lower. The second reading is
+the one the minimax responds to, which is why the robust urgency sits 11.8%
+*above* the geometric midpoint of its range — the first attempt at this phase
+had the direction backwards in prose while the search had it right, and the test
+that measured the ratio is what caught it.
+
+### What the robust schedule is worth, and what it is not
+
+Over a factor of two either way it guarantees 1.92% against 2.56% for the
+geometric midpoint and 2.71% for the arithmetic mean of the range; over a factor
+of ten either way, 23.3% against 47.4%. So it is worth a real amount, and it is
+worth more the less is known. But the headline of the phase is the other way
+round: with the parameters known to within a factor of two, the worst any
+schedule can do is under two per cent of the schedule-dependent cost. The place
+to spend effort on a bad impact estimate is the quote, not the schedule.

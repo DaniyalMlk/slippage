@@ -1103,5 +1103,5 @@ def test_robust_refuses_a_power_law_and_a_negative_factor() -> None:
     # The error goes to stderr, as every other refusal here does.
     code, _ = run("robust", *AC_ARGS, "--risk-aversion", "2e-6", "--beta", "0.6")
     assert code != 0
-    code, text = run("robust", *AC_ARGS, "--risk-aversion", "2e-6", "--factors", "1.0,-2.0")
+    code, _ = run("robust", *AC_ARGS, "--risk-aversion", "2e-6", "--factors", "1.0,-2.0")
     assert code != 0
