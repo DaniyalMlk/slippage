@@ -80,6 +80,13 @@ from .placement import (
 )
 from .report import COMPONENTS, TcaReport, build_report
 from .reversion import DEFAULT_HORIZONS, reversion_profile
+from .robustness import (
+    continuous_regret,
+    misspecification,
+    robust_urgency,
+    urgency_number,
+    urgency_ratio,
+)
 from .scheduling import schedule_objective, solve_schedule
 from .series import BarSeries
 from .shortfall import DelayBasis
@@ -205,6 +212,35 @@ def build_parser() -> argparse.ArgumentParser:
         "--price", type=float, default=50.0, help="share price, for the basis points"
     )
     forecast.add_argument("--json", action="store_true")
+
+    robust = sub.add_parser(
+        "robust",
+        help="what getting the impact or volatility wrong costs",
+        description=(
+            "An Almgren-Chriss schedule sees the impact coefficient, the "
+            "volatility and the risk aversion only through one combination, "
+            "lambda sigma^2 / eta_tilde, so misspecification is a question about "
+            "a single number. The report contrasts how wrong the cost forecast is "
+            "with how wrong the trades are: the first is first order in the "
+            "parameter error and the second only second order, because the "
+            "schedule sits at an optimum."
+        ),
+    )
+    _add_problem_arguments(robust)
+    robust.add_argument("--risk-aversion", type=float, required=True)
+    robust.add_argument(
+        "--factors",
+        type=_float_list,
+        default=[0.5, 0.8, 0.9, 1.1, 1.25, 2.0],
+        help="multiples of the true urgency ratio to suppose were believed",
+    )
+    robust.add_argument(
+        "--range",
+        type=float,
+        default=2.0,
+        help="factor either way over which the robust schedule is hedged",
+    )
+    robust.add_argument("--json", action="store_true")
 
     frontier = sub.add_parser("frontier", help="expected cost against risk")
     _add_problem_arguments(frontier)
@@ -1034,6 +1070,125 @@ def _run_schedule(args: argparse.Namespace, out: TextIO) -> None:
     )
 
 
+def _run_robust(args: argparse.Namespace, out: TextIO) -> None:
+    """What getting the parameters wrong costs, and the schedule that hedges it.
+
+    The headline is the contrast between two columns: the cost forecast is wrong
+    to first order in the parameter error and the trades only to second, so a
+    model that is badly wrong about the bill can still be very nearly right
+    about the schedule.
+    """
+    impact = _impact(args)
+    if not isinstance(impact, LinearImpact):
+        raise ValidationError(
+            "misspecification is defined here for linear impact only; drop --beta"
+        )
+    truth = ExecutionProblem(
+        quantity=args.quantity,
+        horizon=args.horizon,
+        periods=args.periods,
+        volatility=args.volatility,
+        impact=impact,
+    )
+    ratio = urgency_ratio(truth, args.risk_aversion)
+    rows = []
+    for factor in args.factors:
+        if factor <= 0.0:
+            raise ValidationError(f"each factor must be positive, got {factor!r}")
+        believed = ExecutionProblem(
+            quantity=truth.quantity,
+            horizon=truth.horizon,
+            periods=truth.periods,
+            volatility=truth.volatility * math.sqrt(factor),
+            impact=impact,
+        )
+        got = misspecification(believed, truth, args.risk_aversion)
+        limit = continuous_regret(got.believed_ratio, got.true_ratio, truth.horizon)
+        rows.append((factor, got, limit))
+    robust = robust_urgency(truth, args.risk_aversion, ratio / args.range, ratio * args.range)
+
+    if args.json:
+        payload = {
+            "urgency_ratio": ratio,
+            "urgency_number": urgency_number(truth, args.risk_aversion),
+            "cases": [
+                {
+                    "believed_factor": factor,
+                    "ratio_error": got.ratio_error,
+                    "forecast_error": got.forecast_fraction,
+                    "regret_fraction": got.regret_fraction,
+                    "forecast_to_regret": got.forecast_to_regret,
+                    "continuous_limit": limit,
+                }
+                for factor, got, limit in rows
+            ],
+            "robust": {
+                "range": args.range,
+                "ratio": robust.ratio,
+                "worst_regret": robust.worst_regret,
+                "worst_at": robust.worst_at,
+                "geometric_worst": robust.geometric_worst,
+                "arithmetic_worst": robust.arithmetic_worst,
+            },
+        }
+        json.dump(payload, out, indent=2)
+        print(file=out)
+        return
+
+    print(
+        f"urgency ratio lambda sigma^2 / eta_tilde: {ratio:.6g} "
+        f"({urgency_number(truth, args.risk_aversion):.4g} half-lives of horizon)",
+        file=out,
+    )
+    print(
+        "\nThe schedule sees the parameters only through that ratio, so a belief is one number.",
+        file=out,
+    )
+    print(
+        f"\n{'believed':>10}{'ratio err':>12}{'forecast err':>14}"
+        f"{'regret':>12}{'ratio':>9}{'continuum':>12}",
+        file=out,
+    )
+    for factor, got, limit in rows:
+        ratio_text = (
+            "inf" if got.forecast_to_regret == math.inf else f"{got.forecast_to_regret:.0f}"
+        )
+        print(
+            f"{factor:>9.3g}x{got.ratio_error:>+11.2%}{got.forecast_fraction:>+14.2%}"
+            f"{got.regret_fraction:>12.4%}{ratio_text:>9}{limit:>12.4%}",
+            file=out,
+        )
+    print(
+        "\nThe forecast error is first order in the parameter error and the regret is second,",
+        file=out,
+    )
+    print(
+        "so the ratio between them grows without bound as the estimate improves.",
+        file=out,
+    )
+    print(
+        f"\nOver a range of a factor of {args.range:g} either way, the urgency that "
+        f"minimises the worst case",
+        file=out,
+    )
+    print(
+        f"is {robust.ratio:.6g}, above the geometric midpoint {ratio:.6g} "
+        f"because the cost of being",
+        file=out,
+    )
+    print(
+        f"wrong rises with urgency. It guarantees {robust.worst_regret:.3%} against "
+        f"{robust.geometric_worst:.3%} for the",
+        file=out,
+    )
+    print(
+        f"midpoint and {robust.arithmetic_worst:.3%} for the arithmetic mean of the "
+        f"range; the worst case falls at",
+        file=out,
+    )
+    print(f"a true ratio of {robust.worst_at:.6g}.", file=out)
+
+
 def _run_transient(args: argparse.Namespace, out: TextIO) -> None:
     """Schedule against a decay kernel rather than against a trading rate.
 
@@ -1818,6 +1973,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         "markouts": _run_markouts,
         "schedule": _run_schedule,
         "forecast": _run_forecast,
+        "robust": _run_robust,
         "frontier": _run_frontier,
         "basket": _run_basket,
         "transient": _run_transient,
