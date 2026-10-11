@@ -1066,3 +1066,42 @@ def test_capacity_refuses_an_alpha_below_the_commission() -> None:
         "0.005",
     )
     assert code == 2
+
+
+def test_robust_contrasts_the_forecast_error_with_the_regret() -> None:
+    code, text = run("robust", *AC_ARGS, "--risk-aversion", "2e-6")
+    assert code == 0
+    assert "urgency ratio" in text
+    assert "forecast err" in text and "regret" in text
+    # The whole point, in words.
+    assert "first order" in text and "second" in text
+    assert "geometric midpoint" in text
+
+
+def test_robust_json_carries_every_case_and_the_robust_choice() -> None:
+    code, text = run(
+        "robust", *AC_ARGS, "--risk-aversion", "2e-6", "--factors", "0.5,1.0,2.0", "--json"
+    )
+    assert code == 0
+    payload = json.loads(text)
+    assert len(payload["cases"]) == 3
+    exact = next(case for case in payload["cases"] if case["believed_factor"] == 1.0)
+    assert exact["regret_fraction"] == 0.0
+    assert exact["forecast_to_regret"] is None or math.isinf(exact["forecast_to_regret"])
+    for case in payload["cases"]:
+        assert case["regret_fraction"] >= 0.0
+        # The forecast error is the larger of the two wherever the belief is wrong.
+        if case["believed_factor"] != 1.0:
+            assert abs(case["forecast_error"]) > case["regret_fraction"]
+    robust = payload["robust"]
+    assert robust["worst_regret"] < robust["geometric_worst"]
+    assert robust["worst_regret"] < robust["arithmetic_worst"]
+    assert robust["ratio"] > payload["urgency_ratio"]
+
+
+def test_robust_refuses_a_power_law_and_a_negative_factor() -> None:
+    # The error goes to stderr, as every other refusal here does.
+    code, _ = run("robust", *AC_ARGS, "--risk-aversion", "2e-6", "--beta", "0.6")
+    assert code != 0
+    code, _ = run("robust", *AC_ARGS, "--risk-aversion", "2e-6", "--factors", "1.0,-2.0")
+    assert code != 0

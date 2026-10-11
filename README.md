@@ -1221,6 +1221,108 @@ horizon, so `uniform_optimal_horizon` reports an interior optimum for the
 uniform schedule and the module says plainly that the optimal schedule has none,
 rather than returning whichever point a search happened to stop at.
 
+## What a schedule built on the wrong parameters costs
+
+The impact coefficient and the volatility behind a schedule were estimated, and
+they are wrong. The library had eleven ways to compute a schedule and nothing
+that said what being wrong costs.
+
+**The schedule sees one number.** Writing out the mean-variance objective of an
+arbitrary schedule under linear impact:
+
+```
+E + lambda V = epsilon X + gamma X^2 / 2          (no schedule changes this)
+               + (eta_tilde / tau) sum n_k^2
+               + lambda sigma^2 tau sum x_k^2
+```
+
+Everything that depends on the schedule is `eta_tilde` times
+`sum n^2 / tau + r tau sum x^2` with `r = lambda sigma^2 / eta_tilde`. So two
+sets of beliefs with the same `r` produce the *same trades*, bit for bit, and
+the fixed per-share cost never enters at all. A three-dimensional question about
+misspecification is a one-dimensional one, and an error in the impact
+coefficient and an error in the variance rate are literally the same error.
+
+```bash
+slippage robust --quantity 1000000 --horizon 5 --periods 50 \
+    --volatility 0.3 --eta 2e-6 --gamma 2.5e-7 --risk-aversion 2e-6
+```
+
+### The forecast is wrong to first order; the schedule only to second
+
+| believed | ratio error | forecast error | regret | ratio |
+| --- | --- | --- | --- | --- |
+| 0.5x | -50% | -19.13% | 1.1709% | 16 |
+| 0.9x | -10% | -3.50% | 0.0405% | 86 |
+| 1.1x | +10% | +3.35% | 0.0378% | 88 |
+| 2.0x | +100% | +27.23% | 2.8738% | 9 |
+
+The schedule sits at a minimum of the objective, so moving it by a first-order
+amount changes the objective by a second-order one. The cost *prediction* enjoys
+no such protection. Both exponents are measured by a log-log slope rather than
+asserted — 2.00 for the regret and 1.00 for the forecast — which is why the last
+column grows without bound as the estimate improves: at a 1% error it is 876.
+
+So "my impact model is 10% off" should mean two very different things. The bill
+you quoted the desk is 3.5% wrong. The trades you sent are 0.04% wrong.
+
+### How much it can ever cost: exactly one eighth
+
+In the urgent limit the relative regret has a closed form,
+`(sqrt(k) - 1)^2 / (2 sqrt(k))` for a ratio believed `k` times its true value,
+whose expansion is `eps^2 / 8`. A factor-of-two error costs 6.07% of the
+schedule-dependent objective and no more, ever.
+
+That `1/8` is a ceiling approached from below. Expanding the continuous-time
+objective in both arguments gives `(a^2 - y^2)^2 / 45`, so for a patient trader
+the coefficient falls like `y^4 / 45` in `y = sqrt(r) T`, the horizon measured in
+half-lives:
+
+| horizon in half-lives | coefficient |
+| --- | --- |
+| 0.1 | 0.0000022 |
+| 1.0 | 0.0129 |
+| 3.0 | 0.1063 |
+| 8.0 | 0.1250 |
+| 200 | 0.1250 |
+
+Four decades of coefficient between a patient trader and an urgent one. **A long
+horizon is its own hedge against a bad impact estimate**, and the quartic is why
+it is such a good one.
+
+### Which way the asymmetry runs, and the robust schedule
+
+The urgent-limit form is symmetric under `k -> 1/k`, but at finite urgency the
+coefficient rises with urgency, and that settles both asymmetries at once.
+Believing the ratio 1.5 times too large costs 1.70 times what believing it 1.5
+times too small does, because the first lands the trader in the steeper regime.
+Read the other way, with the belief fixed, a truth 1.5 times higher costs 1.47
+times a truth 1.5 times lower — so over a range of possible truths the binding
+case is always the fast end.
+
+Which is why `robust_urgency` leans fast. Over a factor of two either way it
+puts the belief 11.8% above the geometric midpoint of the range and guarantees
+1.92% of the schedule-dependent objective against 2.56% for the midpoint and
+2.71% for the arithmetic mean of the range. Over a factor of ten either way the
+worst case falls from 47.4% to 23.3%, so being robust is worth more the less you
+know — but the first row of that comparison is the one worth remembering: with
+the parameters known to a factor of two, the worst a schedule can do is under
+two per cent.
+
+### Checked against the continuum
+
+The discrete calculation is exact for the discrete problem, and the
+continuous-time closed form is available as a limit to check it against:
+
+```
+F(a, y) = [ (a^2 - y^2) / 2 + (a^2 + y^2) sinh(2a) / (4a) ] / sinh(a)^2
+```
+
+minimised at `a = y`, where it is `y coth y` — the Almgren-Chriss objective. The
+discrete regret approaches `F(a, y) / (y coth y) - 1` like one over the interval
+count, measured at 50, 100, 200, 400 and 800 intervals with the gap halving each
+time.
+
 ## Layout
 
 | module | contents |
