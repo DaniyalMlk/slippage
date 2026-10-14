@@ -32,8 +32,10 @@ __all__ = [
     "Allocation",
     "FillDistribution",
     "Outflow",
+    "RoutingCost",
     "RoutingProblem",
     "Venue",
+    "cost",
     "fill_distribution",
     "venue_fill",
 ]
@@ -425,3 +427,74 @@ def _check_shape(problem: RoutingProblem, allocation: Allocation) -> None:
         raise ValidationError(
             f"allocation covers {len(allocation.posted)} venues, problem has {len(problem.venues)}"
         )
+
+
+@dataclass(frozen=True)
+class RoutingCost:
+    """What an allocation is expected to cost, by where the cost comes from.
+
+    Every field is in currency, being a per-lot cost multiplied by a number
+    of lots. ``rebate`` is signed as a cost like the rest, so a venue that
+    pays its makers contributes a negative number and the four components add
+    to ``total`` without a sign convention of their own.
+    """
+
+    cross: float
+    rebate: float
+    sweep: float
+    unwind: float
+    expected_passive_fill: float
+    expected_shortfall: float
+    expected_excess: float
+    target: int
+    lot: float
+
+    @property
+    def total(self) -> float:
+        return self.cross + self.rebate + self.sweep + self.unwind
+
+    @property
+    def per_share(self) -> float:
+        """The expected cost per share of the target quantity."""
+        return self.total / (self.target * self.lot)
+
+    @property
+    def completion(self) -> float:
+        """The expected fraction of the target filled without sweeping."""
+        return 1.0 - self.expected_shortfall / self.target
+
+
+def cost(problem: RoutingProblem, allocation: Allocation) -> RoutingCost:
+    """The exact expected cost of an allocation.
+
+    Four terms, and the third and fourth are the reason the whole fill
+    distribution had to be computed rather than its mean: a sweep is paid on
+    ``E[(need - F)^+]`` and an unwind on ``E[(F - need)^+]``, and those two
+    are not functions of ``E[F]``.
+    """
+    _check_shape(problem, allocation)
+    total_fill = fill_distribution(problem, allocation)
+    need = problem.target - allocation.taker
+    if need >= 0:
+        shortfall = total_fill.expected_shortfall(need)
+        excess = total_fill.expected_excess(need)
+    else:
+        # Crossing for more than the target over-executes before a single
+        # passive lot fills, and every passive fill adds to that.
+        shortfall = 0.0
+        excess = float(-need) + total_fill.mean
+    rebate = -math.fsum(
+        venue.rebate * venue.outflow.expected_fill(allocation.posted[index])
+        for index, venue in enumerate(problem.venues)
+    )
+    return RoutingCost(
+        cross=problem.taker_cost * allocation.taker,
+        rebate=rebate,
+        sweep=problem.sweep_cost * shortfall,
+        unwind=problem.unwind_cost * excess,
+        expected_passive_fill=total_fill.mean,
+        expected_shortfall=shortfall,
+        expected_excess=excess,
+        target=problem.target,
+        lot=problem.lot,
+    )
