@@ -1105,3 +1105,82 @@ def test_robust_refuses_a_power_law_and_a_negative_factor() -> None:
     assert code != 0
     code, _ = run("robust", *AC_ARGS, "--risk-aversion", "2e-6", "--factors", "1.0,-2.0")
     assert code != 0
+
+
+ROUTE_ARGS = [
+    "route",
+    "--target", "9",
+    "--venue", "A:2:8",
+    "--venue", "B:2:8:0.1",
+    "--histogram", "C:30,0,0,0,0,0,0,0,70",
+    "--taker-cost", "1.0",
+    "--sweep-cost", "2.0",
+]  # fmt: skip
+
+
+def test_route_prints_both_factors_of_the_marginal() -> None:
+    code, text = run(*ROUTE_ARGS, "--unwind-cost", "0.5")
+    assert code == 0
+    # The point of the table: reached belongs to the venue, needed to the rest.
+    assert "reached" in text
+    assert "needed" in text
+    assert "x the target" in text
+    assert "splitting the target by average liquidity instead" in text
+    for name in ("A", "B", "C"):
+        assert f"\n{name:<10}" in text
+
+
+def test_route_confirms_it_found_the_exhaustive_optimum() -> None:
+    code, text = run(*ROUTE_ARGS, "--unwind-cost", "0.5", "--exhaustive")
+    assert code == 0
+    assert "(optimal)" in text
+
+
+def test_route_json_carries_every_quantity_and_no_nan() -> None:
+    code, text = run(*ROUTE_ARGS, "--unwind-cost", "0.5", "--json")
+    assert code == 0
+    payload = json.loads(text)
+    assert payload["target"] == 9
+    assert len(payload["posted"]) == 3
+    assert payload["committed"] == payload["cross"] + sum(payload["posted"])
+    assert payload["cost"]["total"] == pytest.approx(
+        payload["cost"]["cross"]
+        + payload["cost"]["rebate"]
+        + payload["cost"]["sweep"]
+        + payload["cost"]["unwind"]
+    )
+    assert payload["saving_over_proportional"] >= 0.0
+    for row in payload["venues"]:
+        assert 0.0 <= row["next_lot_reached"] <= 1.0
+        assert 0.0 <= row["next_lot_needed"] <= 1.0
+    assert payload["next_cross"]["reached"] == 1.0
+    # Nothing non-finite reaches a payload.
+    json.dumps(payload, allow_nan=False)
+
+
+def test_route_over_posts_only_when_the_unwind_is_cheap() -> None:
+    _, free = run(*ROUTE_ARGS, "--unwind-cost", "0.0", "--json")
+    _, dear = run(*ROUTE_ARGS, "--unwind-cost", "4.0", "--json")
+    cheap = json.loads(free)
+    costly = json.loads(dear)
+    assert cheap["committed"] > costly["committed"]
+    assert cheap["committed_over_target"] > 2.0
+    assert costly["committed_over_target"] < 1.5
+
+
+def test_route_rejects_malformed_venue_specifications() -> None:
+    code, _ = run("route", "--target", "5", "--venue", "A:1.5", "--taker-cost", "1", "--sweep-cost", "2")  # fmt: skip
+    assert code == 2
+    code, _ = run("route", "--target", "5", "--venue", "A:x:6", "--taker-cost", "1", "--sweep-cost", "2")  # fmt: skip
+    assert code == 2
+    code, _ = run("route", "--target", "5", "--histogram", "A", "--taker-cost", "1", "--sweep-cost", "2")  # fmt: skip
+    assert code == 2
+    code, _ = run("route", "--target", "5", "--taker-cost", "1", "--sweep-cost", "2")
+    assert code == 2
+
+
+def test_route_rejects_a_mean_the_support_cannot_carry() -> None:
+    # A bad input returns a message naming the problem and the range, not a
+    # traceback: the error a caller can act on.
+    code, _ = run("route", "--target", "5", "--venue", "A:9:6", "--taker-cost", "1", "--sweep-cost", "2")  # fmt: skip
+    assert code == 2

@@ -31,7 +31,7 @@ from collections.abc import Sequence
 from datetime import time as dt_time
 from datetime import timedelta
 from pathlib import Path
-from typing import TextIO
+from typing import NamedTuple, TextIO
 
 import numpy as np
 
@@ -86,6 +86,17 @@ from .robustness import (
     robust_urgency,
     urgency_number,
     urgency_ratio,
+)
+from .routing import (
+    Outflow,
+    RoutingProblem,
+    Venue,
+    allocation_cost,
+    exhaustive_route,
+    marginal_cross,
+    marginal_posted,
+    proportional_allocation,
+    route,
 )
 from .scheduling import schedule_objective, solve_schedule
 from .series import BarSeries
@@ -662,6 +673,82 @@ def build_parser() -> argparse.ArgumentParser:
         help="mean-variance penalty; a positive value also reports an optimal horizon",
     )
     capacity.add_argument("--json", action="store_true")
+
+    routing = sub.add_parser(
+        "route",
+        help="split one order across venues with random available liquidity",
+        description=(
+            "Decides where to put an order: how much to cross now and how "
+            "much to post at each venue, when the liquidity that arrives at "
+            "each venue is random. Three results are worth reading beside "
+            "the answer. A posted lot is worth the probability that it is "
+            "both reached and needed, and those belong to different venues -- "
+            "the per-venue table prints both. Venues are therefore ranked by "
+            "their liquidity at the margin and not by their average "
+            "liquidity, and the two orderings do disagree. And how far past "
+            "the target to post is a question about the unwind cost alone: "
+            "set --unwind-cost to zero and the answer commits more than twice "
+            "the target."
+        ),
+    )
+    routing.add_argument("--target", type=int, required=True, help="lots to buy")
+    routing.add_argument(
+        "--venue",
+        action="append",
+        default=[],
+        metavar="NAME:MEAN:SUPPORT[:REBATE]",
+        help=(
+            "a venue whose available liquidity is geometric with this mean, "
+            "truncated at this many lots. Repeat for each venue"
+        ),
+    )
+    routing.add_argument(
+        "--histogram",
+        action="append",
+        default=[],
+        metavar="NAME:C0,C1,...[:REBATE]",
+        help=(
+            "a venue whose available liquidity is the empirical histogram "
+            "C0,C1,... of lots observed per interval. Counts, not probabilities"
+        ),
+    )
+    routing.add_argument(
+        "--taker-cost",
+        dest="taker_cost",
+        type=float,
+        required=True,
+        help="per lot, paid on the opening cross",
+    )
+    routing.add_argument(
+        "--sweep-cost",
+        dest="sweep_cost",
+        type=float,
+        required=True,
+        help="per lot, paid on whatever is still unfilled at the end",
+    )
+    routing.add_argument(
+        "--unwind-cost",
+        dest="unwind_cost",
+        type=float,
+        default=0.0,
+        help="per lot, paid on an over-execution. Zero means posting everywhere is free",
+    )
+    routing.add_argument("--lot", type=float, default=1.0, help="shares per lot")
+    routing.add_argument(
+        "--radius",
+        type=int,
+        default=3,
+        help=(
+            "lots the local search may move at once. Three finds the exhaustive "
+            "optimum on every instance measured; one misses about one in thirty"
+        ),
+    )
+    routing.add_argument(
+        "--exhaustive",
+        action="store_true",
+        help="also enumerate every allocation and report the gap, if the problem is small enough",
+    )
+    routing.add_argument("--json", action="store_true")
 
     sample = sub.add_parser("sample-data", help="write a synthetic book to CSV")
     sample.add_argument("--out", type=Path, required=True)
@@ -1965,6 +2052,192 @@ def _run_capacity(args: argparse.Namespace, out: TextIO) -> None:
         )
 
 
+# -- route ------------------------------------------------------------------
+
+
+class _VenueRow(NamedTuple):
+    """One line of the per-venue table, and one object in the JSON payload."""
+
+    venue: str
+    posted: int
+    support: int
+    mean_liquidity: float
+    expected_fill: float
+    rebate: float
+    next_lot_reached: float
+    next_lot_needed: float
+    next_lot_change: float
+
+
+def _parse_venue(spec: str) -> Venue:
+    """``NAME:MEAN:SUPPORT[:REBATE]``, a geometric outflow with that mean."""
+    parts = spec.split(":")
+    if len(parts) not in (3, 4):
+        raise SlippageError(f"--venue takes NAME:MEAN:SUPPORT[:REBATE], got {spec!r}")
+    name = parts[0]
+    try:
+        mean = float(parts[1])
+        support = int(parts[2])
+        rebate = float(parts[3]) if len(parts) == 4 else 0.0
+    except ValueError as error:
+        raise SlippageError(f"--venue {spec!r}: {error}") from error
+    return Venue(name, Outflow.geometric(mean, support), rebate=rebate)
+
+
+def _parse_histogram(spec: str) -> Venue:
+    """``NAME:C0,C1,...[:REBATE]``, an empirical outflow from counts."""
+    parts = spec.split(":")
+    if len(parts) not in (2, 3):
+        raise SlippageError(f"--histogram takes NAME:C0,C1,...[:REBATE], got {spec!r}")
+    name = parts[0]
+    try:
+        counts = [float(count) for count in parts[1].split(",")]
+        rebate = float(parts[2]) if len(parts) == 3 else 0.0
+    except ValueError as error:
+        raise SlippageError(f"--histogram {spec!r}: {error}") from error
+    return Venue(name, Outflow.from_counts(counts), rebate=rebate)
+
+
+def _run_routing(args: argparse.Namespace, out: TextIO) -> None:
+    """Route one order, and show what the decision rests on.
+
+    The per-venue table prints ``reached`` and ``needed`` at the margin --
+    the probability that one more lot there would trade, and the probability
+    that it would also have been wanted. Those are the two factors of the
+    closed-form marginal, and they belong to different venues: the first to
+    this one, the second to every other. A venue whose ``reached`` has gone
+    to zero is full in the only sense that matters.
+    """
+    venues = [_parse_venue(spec) for spec in args.venue]
+    venues.extend(_parse_histogram(spec) for spec in args.histogram)
+    if not venues:
+        raise SlippageError("give at least one --venue or --histogram")
+    problem = RoutingProblem(
+        target=args.target,
+        venues=tuple(venues),
+        taker_cost=args.taker_cost,
+        sweep_cost=args.sweep_cost,
+        unwind_cost=args.unwind_cost,
+        lot=args.lot,
+    )
+    routed = route(problem, radius=args.radius)
+    baseline = allocation_cost(problem, proportional_allocation(problem))
+
+    rows: list[_VenueRow] = []
+    for index, venue in enumerate(problem.venues):
+        marginal = marginal_posted(problem, routed.allocation, index)
+        posted = routed.allocation.posted[index]
+        rows.append(
+            _VenueRow(
+                venue=venue.name,
+                posted=posted,
+                support=venue.outflow.support,
+                mean_liquidity=venue.outflow.mean,
+                expected_fill=venue.outflow.expected_fill(posted),
+                rebate=venue.rebate,
+                next_lot_reached=marginal.reached,
+                next_lot_needed=marginal.needed,
+                next_lot_change=marginal.change,
+            )
+        )
+    next_cross = marginal_cross(problem, routed.allocation)
+
+    gap: float | None = None
+    if args.exhaustive:
+        best = exhaustive_route(problem)
+        gap = routed.cost.total - best.cost.total
+
+    cost = routed.cost
+    if args.json:
+        payload: dict[str, object] = {
+            "target": problem.target,
+            "cross": routed.allocation.taker,
+            "posted": list(routed.allocation.posted),
+            "committed": routed.allocation.committed,
+            "committed_over_target": routed.allocation.committed / problem.target,
+            "expected_passive_fill": cost.expected_passive_fill,
+            "expected_shortfall": cost.expected_shortfall,
+            "expected_excess": cost.expected_excess,
+            "completion": cost.completion,
+            "cost": {
+                "cross": cost.cross,
+                "rebate": cost.rebate,
+                "sweep": cost.sweep,
+                "unwind": cost.unwind,
+                "total": cost.total,
+                "per_share": cost.per_share,
+            },
+            "proportional_per_share": baseline.per_share,
+            "saving_over_proportional": baseline.per_share - cost.per_share,
+            "venues": [row._asdict() for row in rows],
+            "next_cross": {
+                "reached": next_cross.reached,
+                "needed": next_cross.needed,
+                "change": next_cross.change,
+            },
+            "local_search": {"lots_placed": routed.steps, "moves": routed.polished},
+        }
+        if gap is not None:
+            payload["gap_to_exhaustive"] = gap
+        json.dump(payload, out, indent=2, allow_nan=False)
+        print(file=out)
+        return
+
+    print(
+        f"target {problem.target} lots, cross {routed.allocation.taker}, "
+        f"committed {routed.allocation.committed} "
+        f"({routed.allocation.committed / problem.target:.2f}x the target)",
+        file=out,
+    )
+    print(file=out)
+    header = (
+        f"{'venue':<10}{'posted':>7}{'support':>8}{'E[A]':>8}{'E[fill]':>9}"
+        f"{'rebate':>9}{'reached':>9}{'needed':>8}{'next lot':>10}"
+    )
+    print(header, file=out)
+    print("-" * len(header), file=out)
+    for row in rows:
+        print(
+            f"{row.venue:<10}{row.posted:>7}{row.support:>8}"
+            f"{row.mean_liquidity:>8.2f}{row.expected_fill:>9.2f}"
+            f"{row.rebate:>9.3f}{row.next_lot_reached:>9.3f}"
+            f"{row.next_lot_needed:>8.3f}{row.next_lot_change:>+10.4f}",
+            file=out,
+        )
+    print("-" * len(header), file=out)
+    print(
+        f"{'cross':<10}{routed.allocation.taker:>7}{'':>8}{'':>8}{'':>9}{'':>9}"
+        f"{next_cross.reached:>9.3f}{next_cross.needed:>8.3f}{next_cross.change:>+10.4f}",
+        file=out,
+    )
+    print("(reached and needed are for one MORE lot there; next lot is its cost change)", file=out)
+    print(file=out)
+    print(
+        f"expected fill {cost.expected_passive_fill + routed.allocation.taker:.2f} lots, "
+        f"shortfall {cost.expected_shortfall:.2f}, over-execution {cost.expected_excess:.2f}, "
+        f"completion {cost.completion:.1%}",
+        file=out,
+    )
+    print(
+        f"cost: cross {cost.cross:+.4f}  rebate {cost.rebate:+.4f}  "
+        f"sweep {cost.sweep:+.4f}  unwind {cost.unwind:+.4f}  "
+        f"total {cost.total:+.4f} ({cost.per_share:+.5f} per share)",
+        file=out,
+    )
+    print(
+        f"splitting the target by average liquidity instead: "
+        f"{baseline.per_share:+.5f} per share, "
+        f"{baseline.per_share - cost.per_share:+.5f} worse",
+        file=out,
+    )
+    if gap is not None:
+        print(
+            f"exhaustive search over every allocation: gap {gap:+.3e}"
+            + (" (optimal)" if gap <= 1e-12 else ""),
+            file=out,
+        )
+
+
 def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     stream = sys.stdout if out is None else out
     args = build_parser().parse_args(argv)
@@ -1981,6 +2254,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         "placement": _run_placement,
         "vwap": _run_vwap,
         "capacity": _run_capacity,
+        "route": _run_routing,
         "sample-data": _run_sample,
     }
     try:
