@@ -28,8 +28,17 @@ from dataclasses import dataclass
 from .exceptions import ValidationError
 
 __all__ = [
+    "MAX_VENUES",
+    "Allocation",
     "Outflow",
+    "RoutingProblem",
+    "Venue",
 ]
+
+# The exhaustive reference router enumerates the product of the venues'
+# supports, so the number of venues is capped where that stops being a
+# reference and becomes a hang. Real routing tables are shorter than this.
+MAX_VENUES = 12
 
 
 def _finite(name: str, value: float) -> float:
@@ -183,3 +192,120 @@ class Outflow:
         weights = [ratio**k for k in range(support + 1)]
         total = math.fsum(weights)
         return cls(tuple(weight / total for weight in weights))
+
+
+@dataclass(frozen=True)
+class Venue:
+    """One place the order can rest, and what resting there pays.
+
+    ``rebate`` is per lot and signed the way a trader thinks of it: positive
+    is money received for providing liquidity, and a venue that charges its
+    makers takes a negative rebate. It is deliberately not folded into the
+    sweep cost, because the two enter the marginal value of a posted lot in
+    different places -- the rebate is earned whenever the lot fills, and the
+    sweep is saved only when the lot fills *and* was needed.
+    """
+
+    name: str
+    outflow: Outflow
+    rebate: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValidationError("a venue needs a name")
+        _finite("rebate", self.rebate)
+
+
+@dataclass(frozen=True)
+class RoutingProblem:
+    """A quantity to buy, the venues it can rest at, and what each outcome costs.
+
+    All four costs are per lot and positive-is-worse, in the same price units.
+
+    * ``taker_cost`` is paid on the opening cross: half the spread plus the
+      taker fee.
+    * ``sweep_cost`` is paid on whatever is still unfilled when the order's
+      time is up. It is the opening cross plus whatever the delay cost, so a
+      problem where it is *below* ``taker_cost`` is one where there was never
+      any reason to cross at the start; that is allowed, and the router will
+      say so by taking nothing.
+    * ``unwind_cost`` is paid per lot on an over-execution. Posting across
+      several venues risks filling at more than one of them, and a model with
+      no price on that would post everywhere.
+
+    ``lot`` is the number of shares in a lot, used only to report costs per
+    share. The optimisation is over integers because shares are integers, and
+    rounding a continuous answer is measurably not the same thing.
+    """
+
+    target: int
+    venues: tuple[Venue, ...]
+    taker_cost: float
+    sweep_cost: float
+    unwind_cost: float
+    lot: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.target < 1:
+            raise ValidationError(f"target must be at least one lot, got {self.target!r}")
+        if not self.venues:
+            raise ValidationError("a routing problem needs at least one venue")
+        if len(self.venues) > MAX_VENUES:
+            raise ValidationError(
+                f"at most {MAX_VENUES} venues, got {len(self.venues)}; the exhaustive "
+                "reference router enumerates the product of their supports"
+            )
+        names = [venue.name for venue in self.venues]
+        if len(set(names)) != len(names):
+            raise ValidationError(f"venue names must be distinct, got {names}")
+        for field_name in ("taker_cost", "sweep_cost", "unwind_cost"):
+            value = float(getattr(self, field_name))
+            _finite(field_name, value)
+            if value < 0.0:
+                raise ValidationError(f"{field_name} must be non-negative, got {value!r}")
+        _finite("lot", self.lot)
+        if self.lot <= 0.0:
+            raise ValidationError(f"lot must be positive, got {self.lot!r}")
+
+    @property
+    def caps(self) -> tuple[int, ...]:
+        """The largest posted quantity worth considering at each venue.
+
+        Past a venue's support the tail is zero, so an extra lot there cannot
+        fill: it changes neither the rebate earned nor the sweep avoided. The
+        cap is therefore exact rather than a tolerance, which is what makes
+        the exhaustive router a reference and not a wider guess.
+        """
+        return tuple(venue.outflow.support for venue in self.venues)
+
+
+@dataclass(frozen=True)
+class Allocation:
+    """How many lots to cross for, and how many to post at each venue."""
+
+    taker: int
+    posted: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        _non_negative_int("taker", self.taker)
+        for index, lots in enumerate(self.posted):
+            _non_negative_int(f"posted[{index}]", lots)
+
+    @property
+    def total_posted(self) -> int:
+        return sum(self.posted)
+
+    @property
+    def committed(self) -> int:
+        """Lots the order has put at risk: the cross plus everything posted.
+
+        Exceeds the target whenever the router is prepared to pay for an
+        over-execution to raise the chance of a complete fill.
+        """
+        return self.taker + self.total_posted
+
+    def with_lot_at(self, index: int, change: int) -> Allocation:
+        """This allocation with ``change`` lots added at one venue."""
+        posted = list(self.posted)
+        posted[index] += change
+        return Allocation(taker=self.taker, posted=tuple(posted))
