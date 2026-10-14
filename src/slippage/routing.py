@@ -30,9 +30,12 @@ from .exceptions import ValidationError
 __all__ = [
     "MAX_VENUES",
     "Allocation",
+    "FillDistribution",
     "Outflow",
     "RoutingProblem",
     "Venue",
+    "fill_distribution",
+    "venue_fill",
 ]
 
 # The exhaustive reference router enumerates the product of the venues'
@@ -309,3 +312,116 @@ class Allocation:
         posted = list(self.posted)
         posted[index] += change
         return Allocation(taker=self.taker, posted=tuple(posted))
+
+
+@dataclass(frozen=True)
+class FillDistribution:
+    """The exact distribution of a total passive fill, on the lot lattice.
+
+    ``probabilities[k]`` is the probability of filling exactly ``k`` lots
+    across every venue the order rested at. It is a convolution of the
+    per-venue fill distributions, computed in full: a normal approximation to
+    this sum would be a reasonable thing to plot and the wrong thing to
+    optimise over, because the two quantities a router pays for are tails of
+    it at a specific lattice point.
+
+    The two one-sided expectations are each built from the end of the
+    distribution that is accurate there -- the shortfall from the cumulative
+    probabilities at the bottom, the excess from the tails at the top -- which
+    is the layer-cake identity used twice in opposite directions.
+    """
+
+    probabilities: tuple[float, ...]
+
+    @property
+    def support(self) -> int:
+        """The largest total fill with any probability of occurring."""
+        return len(self.probabilities) - 1
+
+    def cumulative(self, lots: int) -> float:
+        """``P(F <= lots)``, summed from the bottom."""
+        if lots < 0:
+            return 0.0
+        if lots >= len(self.probabilities):
+            return 1.0
+        return math.fsum(self.probabilities[: lots + 1])
+
+    def tail(self, lots: int) -> float:
+        """``P(F >= lots)``, summed from the top."""
+        if lots <= 0:
+            return 1.0
+        if lots >= len(self.probabilities):
+            return 0.0
+        return math.fsum(self.probabilities[lots:])
+
+    @property
+    def mean(self) -> float:
+        """``E[F]``."""
+        return math.fsum(lots * probability for lots, probability in enumerate(self.probabilities))
+
+    def expected_shortfall(self, lots: int) -> float:
+        """``E[(lots - F)^+]``: how much, on average, is left to sweep."""
+        if lots <= 0:
+            return 0.0
+        return math.fsum(self.cumulative(level) for level in range(lots))
+
+    def expected_excess(self, lots: int) -> float:
+        """``E[(F - lots)^+]``: how much, on average, has to be unwound."""
+        _non_negative_int("lots", lots)
+        return math.fsum(self.tail(level) for level in range(lots + 1, len(self.probabilities)))
+
+
+def venue_fill(outflow: Outflow, posted: int) -> FillDistribution:
+    """The distribution of ``min(posted, A)`` at one venue.
+
+    Mass piles up at ``posted`` itself: every outcome in which at least that
+    much liquidity arrived fills the whole posted quantity and no more, so the
+    top atom is the outflow's tail rather than its density there.
+    """
+    _non_negative_int("posted", posted)
+    if posted == 0:
+        return FillDistribution((1.0,))
+    cap = min(posted, outflow.support)
+    probabilities = [
+        outflow.probabilities[lots] if lots < len(outflow.probabilities) else 0.0
+        for lots in range(cap)
+    ]
+    probabilities.append(outflow.tail(cap))
+    return FillDistribution(tuple(probabilities))
+
+
+def _convolve(left: tuple[float, ...], right: tuple[float, ...]) -> tuple[float, ...]:
+    out = [0.0] * (len(left) + len(right) - 1)
+    for i, a in enumerate(left):
+        if a == 0.0:
+            continue
+        for j, b in enumerate(right):
+            out[i + j] += a * b
+    return tuple(out)
+
+
+def fill_distribution(
+    problem: RoutingProblem, allocation: Allocation, exclude: int | None = None
+) -> FillDistribution:
+    """The total passive fill across every venue, exactly.
+
+    With ``exclude`` set, the venue at that index is left out. That
+    leave-one-out distribution is not a diagnostic: it is what the closed-form
+    marginal value of a posted lot is written in terms of, because conditional
+    on the extra lot being reached the other venues are independent of
+    everything that decided it.
+    """
+    _check_shape(problem, allocation)
+    total: tuple[float, ...] = (1.0,)
+    for index, venue in enumerate(problem.venues):
+        if index == exclude:
+            continue
+        total = _convolve(total, venue_fill(venue.outflow, allocation.posted[index]).probabilities)
+    return FillDistribution(total)
+
+
+def _check_shape(problem: RoutingProblem, allocation: Allocation) -> None:
+    if len(allocation.posted) != len(problem.venues):
+        raise ValidationError(
+            f"allocation covers {len(allocation.posted)} venues, problem has {len(problem.venues)}"
+        )
