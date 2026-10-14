@@ -17,6 +17,53 @@ over-execution is unwound at a cost.
 
 Everything below is exact arithmetic on a lattice. Nothing here is simulated
 and nothing is a normal approximation.
+
+**A posted lot is worth the probability that it is both reached and needed,
+and those are probabilities of different things.** The closed form in
+:func:`marginal_posted` is ``reached * (-rebate - sweep_cost * needed +
+unwind_cost * (1 - needed))``, where ``reached`` is the venue's own tail at
+the next lot and ``needed`` belongs entirely to the *other* venues. So the
+rebate is earned on the first condition alone and the sweep is saved only on
+both, and the venue index enters the marginal nowhere else. It agrees with
+the difference of two exactly computed costs to 1e-12.
+
+**Which means venues are ranked by their liquidity at the margin and not by
+their average liquidity, and the two orderings genuinely disagree.** Take a
+venue that always has exactly three lots and one that has eight lots seven
+times in ten and nothing the rest. The second has the higher mean, 5.6
+against 3.0, and the first is the right place for the first three lots
+because a lot there is certain to be reached. Filling the higher-mean venue
+first costs 0.600 per share against 0.375 for the routed answer: 60% more,
+on two venues, from one ranking mistake.
+
+**The local optima are as wide as the routing table.** Lots placed one at a
+time by that marginal land on a strict local optimum often enough to matter,
+and the way out is usually to cross a little less and post a little more at
+*every* venue at once -- a move whose L1 norm is the size of the table, so no
+small neighbourhood contains it. Against the exhaustive optimum over 9,000
+random instances, a one-lot neighbourhood is right 96.1% to 99.1% of the
+time, a two-lot one 98.8% to 100%, and a two-lot one plus that single named
+direction family is right every time at three lots. The worst a one-lot
+neighbourhood cost was 23.4% of the cost of not trading at all.
+
+**How much to over-post is a question about the unwind, and the answer is a
+lot.** With over-execution free, the optimum commits 2.33 times the target
+across three venues; at an unwind cost a quarter of the sweep, twice; at
+equal to the sweep, 1.67 times; at twice the sweep, 1.33; at four times,
+1.11. A router that posts the target and no more is answering a different
+question, and :func:`proportional_allocation` is that router: over 3,000
+random instances it costs a median 29.9% more per share than
+:func:`route`, with an interquartile range of 18.9% to 40.3%, and it is
+already optimal on 2.5% of them.
+
+**Fragmentation is worth something, with the total liquidity held fixed.**
+Six venues each expecting one lot are cheaper to trade against than one
+venue expecting six: 0.649 per share against 0.813, a saving of 20.2%, with
+two and three venues at 0.761 and 0.717 in between. Independent venues
+diversify the fill, so the same completion probability needs less
+over-posting -- which is the opposite of the usual complaint about
+fragmented markets, and it is a statement about one order rather than about
+a market.
 """
 
 from __future__ import annotations
