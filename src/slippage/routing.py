@@ -31,12 +31,15 @@ __all__ = [
     "MAX_VENUES",
     "Allocation",
     "FillDistribution",
+    "MarginalLot",
     "Outflow",
     "RoutingCost",
     "RoutingProblem",
     "Venue",
-    "cost",
+    "allocation_cost",
     "fill_distribution",
+    "marginal_cross",
+    "marginal_posted",
     "venue_fill",
 ]
 
@@ -464,7 +467,7 @@ class RoutingCost:
         return 1.0 - self.expected_shortfall / self.target
 
 
-def cost(problem: RoutingProblem, allocation: Allocation) -> RoutingCost:
+def allocation_cost(problem: RoutingProblem, allocation: Allocation) -> RoutingCost:
     """The exact expected cost of an allocation.
 
     Four terms, and the third and fourth are the reason the whole fill
@@ -497,4 +500,93 @@ def cost(problem: RoutingProblem, allocation: Allocation) -> RoutingCost:
         expected_excess=excess,
         target=problem.target,
         lot=problem.lot,
+    )
+
+
+@dataclass(frozen=True)
+class MarginalLot:
+    """What one more lot, posted or crossed, does to the expected cost.
+
+    ``reached`` is the probability that the lot trades at all; for a crossed
+    lot it is one. ``needed`` is the probability that it was *also* wanted --
+    that the rest of the order had not already filled the target without it --
+    computed conditional on the lot being reached, which is exact here because
+    the venues are independent.
+
+    The three cost fields are changes in the corresponding components of
+    :class:`RoutingCost` and add to :attr:`change`. A negative change is an
+    improvement.
+    """
+
+    reached: float
+    needed: float
+    rebate: float
+    sweep: float
+    unwind: float
+
+    @property
+    def change(self) -> float:
+        """The change in total expected cost. Negative is an improvement."""
+        return self.rebate + self.sweep + self.unwind
+
+
+def marginal_posted(problem: RoutingProblem, allocation: Allocation, index: int) -> MarginalLot:
+    """One more lot posted at venue ``index``, in closed form.
+
+    The whole of it is
+
+        reached * (-rebate - sweep_cost * needed + unwind_cost * (1 - needed))
+
+    with ``reached = P(A_i >= posted_i + 1)`` and ``needed`` the probability
+    that the other venues and the cross together leave room for the lot. Two
+    things follow from that form and neither is obvious from a search.
+
+    **A posted lot is worth the probability that it is both reached and
+    needed**, and those are probabilities of different things: ``reached``
+    belongs to the venue, ``needed`` belongs to every *other* venue. So the
+    rebate is earned on the first alone and the sweep is saved only on both.
+
+    **Two venues paying the same rebate are ranked by their tail probability
+    at the next lot, not by their average liquidity.** The venue index enters
+    only through ``reached`` and the rebate; ``needed`` is a property of the
+    leave-one-out distribution and of how much is already posted here. A
+    venue with a high mean and a thin tail at the margin is the wrong place
+    for the next lot even though it is the right place for the first.
+    """
+    _check_shape(problem, allocation)
+    if not 0 <= index < len(problem.venues):
+        raise ValidationError(f"venue index {index} out of range for {len(problem.venues)} venues")
+    venue = problem.venues[index]
+    posted = allocation.posted[index]
+    reached = venue.outflow.tail(posted + 1)
+    others = fill_distribution(problem, allocation, exclude=index)
+    room = problem.target - allocation.taker - posted - 1
+    needed = others.cumulative(room)
+    return MarginalLot(
+        reached=reached,
+        needed=needed,
+        rebate=-venue.rebate * reached,
+        sweep=-problem.sweep_cost * reached * needed,
+        unwind=problem.unwind_cost * reached * (1.0 - needed),
+    )
+
+
+def marginal_cross(problem: RoutingProblem, allocation: Allocation) -> MarginalLot:
+    """One more lot crossed at the start, in closed form.
+
+    A crossed lot is reached with certainty, so its only uncertainty is
+    whether it was needed -- and that is read off the *full* passive
+    distribution rather than a leave-one-out one, because crossing competes
+    with every venue at once.
+    """
+    _check_shape(problem, allocation)
+    passive = fill_distribution(problem, allocation)
+    room = problem.target - allocation.taker - 1
+    needed = passive.cumulative(room)
+    return MarginalLot(
+        reached=1.0,
+        needed=needed,
+        rebate=problem.taker_cost,
+        sweep=-problem.sweep_cost * needed,
+        unwind=problem.unwind_cost * (1.0 - needed),
     )
