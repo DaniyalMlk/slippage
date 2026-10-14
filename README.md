@@ -984,6 +984,143 @@ moving the barrier changes that term the wrong way. A test on the probability
 can use a modest step count and the correction; a test on the mean needs the
 steps.
 
+## Where to put the order, when the liquidity is random
+
+`placement` prices resting against crossing at *a* venue. `routing` answers the
+question before that one: with several venues, how much to cross now and how
+much to post at each. Each venue's available liquidity is a random number of
+lots drawn from a distribution you supply, the passive fill there is
+`min(posted, available)`, whatever is unfilled at the end is swept at a worse
+price, and an over-execution is unwound at a cost.
+
+```python
+from slippage import Outflow, RoutingProblem, Venue, route
+
+problem = RoutingProblem(
+    target=9,  # lots to buy
+    venues=(
+        Venue("lit-a", Outflow.geometric(2.0, 8)),
+        Venue("lit-b", Outflow.geometric(2.0, 8), rebate=0.10),
+        # three times in ten the dark venue is empty; the rest of the time it is deep
+        Venue("dark", Outflow.from_counts([30, 0, 0, 0, 0, 0, 0, 0, 70])),
+    ),
+    taker_cost=1.00,  # half the spread plus the taker fee, per lot
+    sweep_cost=2.00,  # crossing later, after the price has moved
+    unwind_cost=0.50,  # per lot of over-execution
+)
+
+routed = route(problem)
+routed.allocation.posted  # (7, 7, 8)
+routed.allocation.committed / 9  # 2.44 times the target
+routed.cost.per_share  # 0.4544
+```
+
+Everything is exact arithmetic on a lattice. The distribution of the total
+passive fill is a full convolution rather than a normal approximation, because
+the two things a router pays for — the sweep of what is unfilled and the unwind
+of what is not — are one-sided expectations taken at a single lattice point, and
+neither is a function of the mean.
+
+The same thing from the command line, which prints both factors of the
+marginal for each venue and checks the answer against exhaustive search:
+
+```bash
+slippage route --target 9 --venue lit-a:2:8 --venue lit-b:2:8:0.1 \
+    --histogram dark:30,0,0,0,0,0,0,0,70 \
+    --taker-cost 1.0 --sweep-cost 2.0 --unwind-cost 0.5 --exhaustive
+```
+
+```
+target 9 lots, cross 0, committed 22 (2.44x the target)
+
+venue      posted support    E[A]  E[fill]   rebate  reached  needed  next lot
+------------------------------------------------------------------------------
+lit-a           7       8    2.00     1.98    0.000    0.019   0.157   +0.0021
+lit-b           7       8    2.00     1.98    0.100    0.019   0.157   +0.0002
+dark            8       8    5.60     5.60    0.000    0.000   0.094   +0.0000
+------------------------------------------------------------------------------
+cross           0                                      1.000   0.344   +0.6409
+(reached and needed are for one MORE lot there; next lot is its cost change)
+
+expected fill 9.56 lots, shortfall 1.60, over-execution 2.16, completion 82.2%
+cost: cross +0.0000  rebate -0.1981  sweep +3.2058  unwind +1.0822  total +4.0900 (+0.45444 per share)
+splitting the target by average liquidity instead: +0.68873 per share, +0.23429 worse
+exhaustive search over every allocation: gap +0.000e+00 (optimal)
+```
+
+### A posted lot is worth the probability that it is both reached and needed
+
+`marginal_posted` is a closed form:
+
+```
+reached * (-rebate - sweep_cost * needed + unwind_cost * (1 - needed))
+```
+
+`reached` is the venue's own tail at the next lot. `needed` is the chance that
+the *other* venues and the cross have not already covered the target, so it
+belongs to every venue except this one. The venue index enters nowhere else.
+The rebate is therefore earned on the first condition alone and the sweep is
+saved only on both, and the formula agrees with the difference of two exactly
+computed costs to 1e-12.
+
+### Which makes average liquidity the wrong ranking
+
+One venue always has exactly three lots. Another has eight lots seven times in
+ten and nothing otherwise. The second has the higher mean — 5.6 against 3.0 —
+and the first is where the first three lots belong, because a lot there is
+certain to be reached.
+
+```
+by the margin (3, 5)   0.375 per share
+by the mean   (0, 8)   0.600 per share      60% more
+```
+
+The everyday version of that mistake is splitting the target in proportion to
+average liquidity, which `proportional_allocation` does and
+`compare_to_proportional` prices: a median 29.9% more per share over 3,000
+random instances, interquartile range 18.9% to 40.3%, already optimal on 2.5%
+of them.
+
+### The router is checked rather than trusted
+
+`route` places lots one at a time by that marginal, then runs a local search
+over every move of at most `radius` lots. `exhaustive_route` enumerates every
+integer allocation, with the cross capped at the target and each venue capped
+at its outflow's support — both exact rather than generous, so it really is
+the optimum.
+
+Measured against it over 9,000 random instances in three families, a one-lot
+neighbourhood finds 96.1% to 99.1% of the optima, a two-lot one 98.8% to 100%,
+and the three-lot default all of them. The local optima are as wide as the
+routing table: the way out of one is usually to cross a little less and post a
+little more at *every* venue at once, a move whose L1 norm is the size of the
+table. No fixed small neighbourhood contains it and widening the ball is not an
+option at `(2 radius + 1) ** width` vectors, so that direction is added by name.
+
+### How far past the target to post is a question about the unwind alone
+
+| unwind / sweep | committed | times the target |
+|---|---|---|
+| 0.00 | 21 | 2.33 |
+| 0.25 | 18 | 2.00 |
+| 0.50 | 18 | 2.00 |
+| 1.00 | 15 | 1.67 |
+| 2.00 | 12 | 1.33 |
+| 4.00 | 10 | 1.11 |
+
+Nine lots across three venues each expecting two. A router that posts the
+target and no more has not chosen a conservative answer; it has answered a
+different question.
+
+### Fragmentation is worth something, with the liquidity held fixed
+
+Six venues each expecting one lot cost 0.649 per share against 0.813 for one
+venue expecting six — a saving of 20.2%, with two and three venues at 0.761 and
+0.717 in between. Independent venues diversify the fill, so the same completion
+probability needs less over-posting. That is the opposite of the usual complaint
+about fragmented markets, and it is a statement about one order rather than
+about a market.
+
 ## A benchmark that moves, and the floor it sets
 
 Five schedulers here — `execution`, `scheduling`, `basket`, `transient`,
@@ -1335,6 +1472,7 @@ time.
 | `scheduling` | the constrained dynamic programme and its re-optimisation policy |
 | `volume`, `simulate` | volume profiles, TWAP/VWAP/POV schedules and Monte Carlo costs |
 | `placement` | resting a limit order against crossing: fill probability, adverse selection and the cost of each |
+| `routing` | splitting one order across venues: the exact fill distribution, the marginal value of a posted lot, and the router |
 | `tracking` | VWAP tracking error, its irreducible floor, and the trade-off against impact |
 | `io`, `cli`, `synthetic` | CSV input and output, the `slippage` command, synthetic books |
 

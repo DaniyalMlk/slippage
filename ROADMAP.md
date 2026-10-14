@@ -777,3 +777,71 @@ worth more the less is known. But the headline of the phase is the other way
 round: with the parameters known to within a factor of two, the worst any
 schedule can do is under two per cent of the schedule-dependent cost. The place
 to spend effort on a bad impact estimate is the quote, not the schedule.
+
+## Phase 19 — Where to put the order, when the liquidity is random
+
+- [x] A discrete outflow distribution per venue on a lot lattice, with tails
+      summed from the top and `E[min(L, A)]` from the layer-cake identity
+- [x] Empirical, uniform, point and truncated-geometric constructors, the last
+      solving for the ratio that matches a requested mean
+- [x] The exact distribution of the total passive fill by convolution, checked
+      against brute-force enumeration over the product of the supports
+- [x] The expected cost of an allocation in four components: the cross, the
+      rebates, the sweep of what is unfilled and the unwind of what is not
+- [x] The marginal value of one more posted or crossed lot, in closed form
+- [x] A router by marginal placement and local search, and an exhaustive
+      reference to measure it against
+- [x] The average-liquidity split as the baseline, and what it costs
+- [x] A `route` command and a worked example
+
+### A posted lot is worth the probability that it is both reached and needed
+
+The marginal is `reached * (-rebate - sweep_cost * needed + unwind_cost *
+(1 - needed))`, where `reached` is the venue's own tail at the next lot and
+`needed` is a property of the *leave-one-out* distribution — the chance the
+rest of the order has not already covered the target. The venue index enters
+nowhere else. So the rebate is earned on the first condition alone and the
+sweep is saved only on both, and the closed form agrees with the difference of
+two exactly computed costs to 1e-12 over four hundred instances.
+
+### Which makes average liquidity the wrong ranking, and measurably so
+
+Two venues: one always has exactly three lots, the other has eight lots seven
+times in ten and nothing otherwise. The second has the higher mean, 5.6 against
+3.0, and the first is where the first three lots belong because a lot there is
+certain to be reached. Filling the higher-mean venue first costs 0.600 per
+share against 0.375 for the routed answer — 60% more, on two venues, from one
+ranking mistake. The generic version of the same mistake, splitting the target
+in proportion to average liquidity, costs a median 29.9% more per share over
+3,000 random instances, with an interquartile range of 18.9% to 40.3%; it is
+already optimal on 2.5% of them.
+
+### The local optima are as wide as the routing table
+
+Placing lots one at a time by that marginal lands on a strict local optimum
+often enough to matter, and the way out is usually to cross a little less and
+post a little more at *every* venue at once. The L1 norm of that move is the
+size of the table, so no fixed small neighbourhood contains it and widening
+the ball is not an option at `(2 radius + 1) ** width` vectors. Adding that one
+direction family by name took a two-lot neighbourhood from 96.9% of the optima
+to 99.1%. Against the exhaustive optimum over 9,000 random instances in three
+families, a one-lot neighbourhood is right 96.1% to 99.1% of the time and a
+three-lot one every time; the worst a one-lot neighbourhood cost was 23.4% of
+the cost of not trading at all.
+
+### How far past the target to post is a question about the unwind alone
+
+With over-execution free the optimum commits 2.33 times the target across three
+venues; at an unwind cost a quarter of the sweep, twice; at equal to the sweep,
+1.67 times; at twice, 1.33; at four times, 1.11. Monotone throughout. A router
+that posts the target and no more has not chosen a conservative answer, it has
+answered a different question.
+
+### Fragmentation is worth something, with the liquidity held fixed
+
+Six venues each expecting one lot are cheaper to trade against than one venue
+expecting six: 0.649 per share against 0.813, a saving of 20.2%, with two and
+three venues at 0.761 and 0.717 in between. Independent venues diversify the
+fill, so the same completion probability needs less over-posting. That is the
+opposite of the usual complaint about fragmented markets, and it is a statement
+about one order rather than about a market.
