@@ -151,7 +151,8 @@ class SpreadEstimate:
     #: The estimate before any negative values were floored at zero. Equal to
     #: :attr:`spread` when nothing was floored, and the honest number to look
     #: at when something was: flooring is a one-sided operation and biases the
-    #: average up by exactly the mass it removes.
+    #: average up by exactly the mass it removes. It can be negative, and when
+    #: it is, the reported spread is entirely an artefact of the flooring.
     unfloored: float
 
     def __post_init__(self) -> None:
@@ -177,7 +178,9 @@ class SpreadEstimate:
     @property
     def flooring_lift(self) -> float:
         """How much flooring the negatives raised the answer, as a fraction."""
-        if self.unfloored == 0.0:
+        if self.unfloored <= 0.0:
+            # The whole of the reported number is the flooring: there was no
+            # positive estimate underneath it to raise.
             return math.inf if self.spread > 0.0 else 0.0
         return self.spread / self.unfloored - 1.0
 
