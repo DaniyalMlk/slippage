@@ -101,6 +101,11 @@ from .routing import (
 from .scheduling import schedule_objective, solve_schedule
 from .series import BarSeries
 from .shortfall import DelayBasis
+from .spread import (
+    Estimator,
+    estimate_spread,
+    score_estimators,
+)
 from .synthetic import synthetic_book
 from .tracking import (
     TrackingFrontierPoint,
@@ -749,6 +754,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="also enumerate every allocation and report the gap, if the problem is small enough",
     )
     routing.add_argument("--json", action="store_true")
+
+    spread = sub.add_parser(
+        "spread",
+        help="estimate the half-spread from bars, and see whether it means anything",
+        description=(
+            "Runs Roll, Corwin-Schultz and Abdi-Ranaldo over a file of bars "
+            "and prints all three, because they disagree and the disagreement "
+            "is the information. Each is reported with the share of windows it "
+            "refused and its value before those refusals were floored at zero; "
+            "an unfloored value at or below zero means the whole reported "
+            "spread is the flooring. With --score it instead runs the model the "
+            "estimators are derived under, where the spread is known, and "
+            "reports the bias, the dispersion and the standard error of each."
+        ),
+    )
+    spread.add_argument("--bars", type=Path, help="CSV of OHLCV bars")
+    spread.add_argument("--symbol", default=None, help="which symbol, if the file holds several")
+    spread.add_argument(
+        "--score",
+        type=float,
+        default=None,
+        help="score the estimators against this known spread instead, as a fraction",
+    )
+    spread.add_argument("--days", type=int, default=252, help="days per simulated run")
+    spread.add_argument("--ticks", type=int, default=78, help="trades a day in the simulation")
+    spread.add_argument("--runs", type=int, default=200, help="simulated runs to average")
+    spread.add_argument(
+        "--volatility", type=float, default=0.02, help="daily volatility of the efficient price"
+    )
+    spread.add_argument("--seed", type=int, default=1000)
+    spread.add_argument("--json", action="store_true")
 
     sample = sub.add_parser("sample-data", help="write a synthetic book to CSV")
     sample.add_argument("--out", type=Path, required=True)
@@ -2238,6 +2274,145 @@ def _run_routing(args: argparse.Namespace, out: TextIO) -> None:
         )
 
 
+def _run_spread(args: argparse.Namespace, out: TextIO) -> None:
+    """Estimate the half-spread the rest of the library takes as an argument.
+
+    Three estimators over the same bars, because they disagree and the
+    disagreement is informative. What the command prints beside each number
+    is the share of windows the estimator refused and its value before those
+    refusals were floored at zero: an unfloored value at or below zero means
+    the reported spread is the flooring and nothing else, which happens
+    routinely at the spread-to-volatility ratios of liquid names.
+
+    With ``--score`` it runs the model the estimators are derived under
+    instead, where the spread is known, and reports what each one does to it.
+    """
+    if args.score is not None:
+        rows = score_estimators(
+            days=args.days,
+            spread=args.score,
+            volatility=args.volatility,
+            runs=args.runs,
+            ticks=args.ticks,
+            seed=args.seed,
+        )
+        payload = {
+            "truth_bps": args.score * 10000.0,
+            "days": args.days,
+            "ticks": args.ticks,
+            "runs": args.runs,
+            "volatility": args.volatility,
+            "estimators": [
+                {
+                    "estimator": row.estimator.value,
+                    "mean_bps": row.mean * 10000.0,
+                    "bias": row.bias,
+                    "rmse_bps": row.rmse * 10000.0,
+                    "standard_error_bps": row.rmse / math.sqrt(row.runs) * 10000.0,
+                    "refusal_rate": row.refusal_rate,
+                    "unfloored_mean_bps": row.unfloored_mean * 10000.0,
+                }
+                for row in rows
+            ],
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2, default=float), file=out)
+            return
+        print(
+            f"A spread of {args.score * 10000:.1f}bp against a daily volatility of "
+            f"{args.volatility:.4f} -- a ratio of {args.score / args.volatility:.3f} "
+            f"-- over {args.runs} runs of {args.days} days at {args.ticks} ticks.\n",
+            file=out,
+        )
+        header = ["estimator", "mean bp", "bias", "rmse bp", "se bp", "refused", "unfloored bp"]
+        widths = [16, 9, 9, 9, 8, 9, 13]
+        row_text = "  ".join(name.ljust(width) for name, width in zip(header, widths, strict=True))
+        print(row_text, file=out)
+        print("  ".join("-" * width for width in widths), file=out)
+        for row in payload["estimators"]:
+            cells = [
+                str(row["estimator"]),
+                f"{row['mean_bps']:.2f}",
+                f"{row['bias'] * 100:+.2f}%",
+                f"{row['rmse_bps']:.2f}",
+                f"{row['standard_error_bps']:.2f}",
+                f"{row['refusal_rate'] * 100:.1f}%",
+                f"{row['unfloored_mean_bps']:.2f}",
+            ]
+            line = "  ".join(cell.ljust(width) for cell, width in zip(cells, widths, strict=True))
+            print(line, file=out)
+        empty = [
+            row["estimator"]
+            for row in payload["estimators"]
+            if float(row["unfloored_mean_bps"]) <= 0.0
+        ]
+        if empty:
+            print(
+                "\nBefore flooring, "
+                + " and ".join(str(one) for one in empty)
+                + " came out at or below zero: at this ratio the whole of the "
+                "reported spread is the flooring, not an estimate.",
+                file=out,
+            )
+        return
+
+    if args.bars is None:
+        raise SlippageError("--bars is required unless --score is given")
+    grouped = load_bars(args.bars)
+    if args.symbol is not None:
+        if args.symbol not in grouped:
+            raise SlippageError(
+                f"{args.symbol} is not in {args.bars}; it has {', '.join(sorted(grouped))}"
+            )
+        series = grouped[args.symbol]
+    elif len(grouped) == 1:
+        series = next(iter(grouped.values()))
+    else:
+        raise SlippageError(f"{args.bars} holds {len(grouped)} symbols; name one with --symbol")
+    bars = list(series)
+    estimates = [estimate_spread(bars, one) for one in Estimator]
+    payload = {
+        "bars": len(bars),
+        "estimators": [
+            {
+                "estimator": one.estimator.value,
+                "spread_bps": one.basis_points,
+                "half_spread": one.half_spread,
+                "windows": one.windows,
+                "refusal_rate": one.rejection_rate,
+                "unfloored_bps": one.unfloored * 10000.0,
+            }
+            for one in estimates
+        ],
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, default=float), file=out)
+        return
+    print(f"{len(bars)} bars.\n", file=out)
+    header = ["estimator", "spread bp", "half spread", "refused", "unfloored bp"]
+    widths = [16, 11, 13, 9, 13]
+    row_text = "  ".join(name.ljust(width) for name, width in zip(header, widths, strict=True))
+    print(row_text, file=out)
+    print("  ".join("-" * width for width in widths), file=out)
+    for row in payload["estimators"]:
+        cells = [
+            str(row["estimator"]),
+            f"{row['spread_bps']:.2f}",
+            f"{row['half_spread']:.6f}",
+            f"{row['refusal_rate'] * 100:.1f}%",
+            f"{row['unfloored_bps']:.2f}",
+        ]
+        line = "  ".join(cell.ljust(width) for cell, width in zip(cells, widths, strict=True))
+        print(line, file=out)
+    print(
+        "\nThe half-spread column is what `slippage placement --half-spread` "
+        "takes, as a fraction of price. Read the last column first: an "
+        "unfloored value at or below zero means the estimator found nothing "
+        "and the number beside it is the flooring.",
+        file=out,
+    )
+
+
 def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     stream = sys.stdout if out is None else out
     args = build_parser().parse_args(argv)
@@ -2255,6 +2430,7 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         "vwap": _run_vwap,
         "capacity": _run_capacity,
         "route": _run_routing,
+        "spread": _run_spread,
         "sample-data": _run_sample,
     }
     try:

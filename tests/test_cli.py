@@ -1184,3 +1184,77 @@ def test_route_rejects_a_mean_the_support_cannot_carry() -> None:
     # traceback: the error a caller can act on.
     code, _ = run("route", "--target", "5", "--venue", "A:9:6", "--taker-cost", "1", "--sweep-cost", "2")  # fmt: skip
     assert code == 2
+
+
+class TestSpread:
+    """Estimating the half-spread the rest of the library takes as given."""
+
+    def test_it_reports_all_three_with_their_refusals(self, sample: Path) -> None:
+        code, text = run("spread", "--bars", str(sample / "bars.csv"), "--symbol", "SYM00")
+        assert code == 0
+        for name in ("roll", "corwin-schultz", "abdi-ranaldo"):
+            assert name in text
+        assert "unfloored bp" in text
+        assert "half spread" in text
+
+    def test_json_carries_the_unfloored_value(self, sample: Path) -> None:
+        code, text = run(
+            "spread", "--bars", str(sample / "bars.csv"), "--symbol", "SYM00", "--json"
+        )
+        assert code == 0
+        payload = json.loads(text)
+        assert payload["bars"] > 0
+        assert len(payload["estimators"]) == 3
+        for row in payload["estimators"]:
+            assert row["spread_bps"] >= 0.0
+            assert row["half_spread"] == pytest.approx(row["spread_bps"] / 20000.0)
+            assert 0.0 <= row["refusal_rate"] <= 1.0
+        assert json.dumps(payload, allow_nan=False)
+
+    def test_it_says_when_the_reported_spread_is_only_the_flooring(self, sample: Path) -> None:
+        # The synthetic book has no bid-ask bounce in it, so there is no
+        # spread to find and the estimators should say so rather than
+        # returning a confident small number.
+        code, text = run("spread", "--bars", str(sample / "bars.csv"), "--symbol", "SYM00")
+        assert code == 0
+        assert "the number beside it is the flooring" in text
+
+    def test_score_runs_the_model_the_estimators_assume(self) -> None:
+        code, text = run(
+            "spread", "--score", "0.001", "--runs", "20", "--days", "120", "--ticks", "78"
+        )
+        assert code == 0
+        assert "ratio of 0.050" in text
+        assert "the whole of the reported spread is the flooring" in text
+
+    def test_score_json_has_a_standard_error_beside_every_bias(self) -> None:
+        code, text = run(
+            "spread",
+            "--score",
+            "0.02",
+            "--runs",
+            "20",
+            "--days",
+            "120",
+            "--json",
+        )
+        assert code == 0
+        payload = json.loads(text)
+        assert payload["truth_bps"] == pytest.approx(200.0)
+        for row in payload["estimators"]:
+            assert row["standard_error_bps"] == pytest.approx(
+                row["rmse_bps"] / math.sqrt(payload["runs"]), rel=1e-9
+            )
+        assert json.dumps(payload, allow_nan=False)
+
+    def test_it_needs_bars_or_a_spread_to_score(self) -> None:
+        code, _ = run("spread")
+        assert code == 2
+
+    def test_it_names_the_symbols_it_has(self, sample: Path) -> None:
+        code, _ = run("spread", "--bars", str(sample / "bars.csv"), "--symbol", "NOPE")
+        assert code == 2
+
+    def test_it_refuses_to_guess_between_symbols(self, sample: Path) -> None:
+        code, _ = run("spread", "--bars", str(sample / "bars.csv"))
+        assert code == 2
