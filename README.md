@@ -1460,6 +1460,50 @@ discrete regret approaches `F(a, y) / (y coth y) - 1` like one over the interval
 count, measured at 50, 100, 200, 400 and 800 intervals with the gap halving each
 time.
 
+## Where the half-spread comes from
+
+`placement` takes a `half_spread`. `shortfall` charges one. Neither says where
+the number comes from, and over bars it is not observable — so `slippage.spread`
+implements the three published estimators that infer it from prices, and then
+measures when any of them can be believed.
+
+```python
+from slippage import Estimator, estimate_spread, score_estimators
+
+estimate_spread(bars, Estimator.ABDI_RANALDO).half_spread
+```
+
+All three can produce a negative answer — Roll's sample covariance can come
+out positive, the other two's averages can be negative — and the published
+treatment is to set those to zero. That is a one-sided operation on a
+two-sided sampling error, so every estimate carries `unfloored` beside it.
+Over 200 runs of 252 days at 78 trades a day against a 2% daily volatility:
+
+| spread / volatility | estimator | mean | bias | before flooring |
+|---|---|---|---|---|
+| 0.05 | Roll | 45.1bp | +351% | 7.9bp |
+| 0.05 | Corwin-Schultz | 72.7bp | +627% | **-4.3bp** |
+| 0.05 | Abdi-Ranaldo | 22.0bp | +120% | **-1.1bp** |
+| 1.00 | Roll | 200.7bp | +0.3% | 200.7bp |
+| 1.00 | Corwin-Schultz | 192.7bp | -3.7% | 167.3bp |
+| 1.00 | Abdi-Ranaldo | 199.4bp | -0.3% | 199.4bp |
+
+A 10bp spread against a 2% daily volatility is an ordinary large-cap stock,
+and at that ratio two of the three have an unfloored mean **below zero**: they
+contain no information about the spread, and every basis point they report is
+the flooring. At a ratio of one they all work, and Roll is unbiased with three
+times the dispersion of the other two while Corwin-Schultz is the tightest
+with a bias nine standard errors from zero.
+
+Corwin-Schultz also turns out to be calibrated to a trading frequency rather
+than to a market: holding everything else and varying only how many trades a
+day the high and the low are the extremes of, its bias runs from -45.5% at
+eight trades to +7.0% at 390, crossing zero near a hundred. Roll shows no
+dependence the runs can resolve and Abdi-Ranaldo a tenth of the range.
+
+`slippage spread --bars prices.csv` prints all three with their refusal rates;
+`slippage spread --score 0.002` scores them against a spread that is known.
+
 ## Layout
 
 | module | contents |
