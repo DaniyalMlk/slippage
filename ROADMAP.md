@@ -845,3 +845,97 @@ three venues at 0.761 and 0.717 in between. Independent venues diversify the
 fill, so the same completion probability needs less over-posting. That is the
 opposite of the usual complaint about fragmented markets, and it is a statement
 about one order rather than about a market.
+
+## Phase 20 — Where the half-spread comes from
+
+- [x] Roll's serial-covariance estimator, with its undefined case reported
+      rather than silently clipped
+- [x] The Corwin-Schultz high-low estimator, with the share of windows that
+      come out negative on the result
+- [x] The Abdi-Ranaldo close-high-low estimator
+- [x] The value before negatives were floored, kept on every estimate
+- [x] A simulation of an efficient random walk with an independent bounce and
+      a finite number of trades a day, so the spread is known
+- [x] Bias, dispersion, standard error and refusal rate for each estimator
+      across spread-to-volatility ratios and across tick counts
+- [x] A `spread` subcommand, in both modes
+
+### What the phase is for
+
+`placement` has taken a `half_spread` argument since Phase 13 and `shortfall`
+has charged a spread since Phase 2. Neither says where the number comes from,
+and over bars it is not observable. Three published estimators infer it from
+prices. What was missing is not any of them but a measurement of when any of
+them can be believed.
+
+### The flooring is a one-sided operation on a two-sided error
+
+All three can produce a negative answer: Roll's sample covariance can be
+positive, Corwin-Schultz's windows can be negative, Abdi-Ranaldo's mean
+product can be. The published treatment sets those to zero, and that cannot be
+neutral. Over 200 runs of 252 days at 78 trades a day against a 2% daily
+volatility:
+
+| spread / volatility | estimator | mean | bias | before flooring |
+|---|---|---|---|---|
+| 0.05 | Roll | 45.1bp | +351% | 7.9bp |
+| 0.05 | Corwin-Schultz | 72.7bp | +627% | **-4.3bp** |
+| 0.05 | Abdi-Ranaldo | 22.0bp | +120% | **-1.1bp** |
+| 0.25 | Roll | 57.2bp | +14% | 29.7bp |
+| 0.25 | Corwin-Schultz | 90.1bp | +80% | 24.3bp |
+| 0.25 | Abdi-Ranaldo | 43.3bp | -13% | 34.4bp |
+| 1.00 | Roll | 200.7bp | +0.3% | 200.7bp |
+| 1.00 | Corwin-Schultz | 192.7bp | -3.7% | 167.3bp |
+| 1.00 | Abdi-Ranaldo | 199.4bp | -0.3% | 199.4bp |
+
+A 10bp spread against a 2% daily volatility is an ordinary large-cap stock,
+and the first block says that at that ratio two of the three estimators have
+an unfloored mean *below zero*: they contain no information about the spread
+and every basis point they report is the flooring. They are not imprecise
+there. They are empty, and they return a positive number anyway.
+
+### Unbiased and wide, or tight and wrong
+
+At a ratio of one they all work and they are not interchangeable. Roll's bias
+is +0.3% against a standard error of 1.4%, so it is unbiased as far as 200
+runs can resolve, and its dispersion is 39.4bp against Abdi-Ranaldo's 13.2 and
+Corwin-Schultz's 11.4. Corwin-Schultz is the tightest and its -3.7% bias is
+nine standard errors from zero. Roll also stops refusing entirely at that
+ratio, where it refuses 47.5% of the time at a ratio of 0.05.
+
+### Corwin-Schultz is calibrated to a trading frequency
+
+The range of a path sampled at finitely many points is not the range of the
+path, and the high-low estimators are derived from the latter. Holding
+everything else and varying only how many trades a day the high and low are
+the extremes of:
+
+| trades a day | Roll | Corwin-Schultz | Abdi-Ranaldo |
+|---|---|---|---|
+| 8 | -0.0% | **-45.5%** | -5.8% |
+| 20 | -1.4% | -22.8% | -2.5% |
+| 39 | -3.9% | -11.6% | -1.3% |
+| 78 | -4.3% | -3.9% | -1.8% |
+| 195 | +1.6% | +3.7% | -0.6% |
+| 390 | -1.5% | **+7.0%** | -1.4% |
+
+Nothing in Roll's column exceeds twice its standard error of 2.2%, so it does
+not depend on the tick count in any way 100 runs can see. Corwin-Schultz moves
+monotonically across fifty-two points and crosses zero near a hundred trades a
+day, so it is right at one sampling frequency and which one has nothing to do
+with the market. Abdi-Ranaldo has the same dependence with a tenth of the
+range.
+
+### Two checks that are not simulations
+
+With the efficient price held still and only the bounce moving, Corwin-Schultz
+and Abdi-Ranaldo are exact in closed form: a still price makes `beta` exactly
+twice `gamma`, which collapses Corwin-Schultz's `alpha` to the log spread, and
+Abdi-Ranaldo's two deviations become the same close against two identical
+midranges, so their product is the squared half-spread every time.
+
+And Roll's independence assumption is load-bearing in a way that does not
+announce itself. Make the bounce strictly alternate instead of being drawn
+independently and the covariance is the whole squared spread rather than a
+quarter of it, so the estimator returns **exactly twice** the truth — a wrong
+number rather than a refusal.
