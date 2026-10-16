@@ -166,24 +166,76 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     tca = sub.add_parser("tca", help="implementation shortfall report over a book of orders")
-    tca.add_argument("--orders", type=Path, required=True)
-    tca.add_argument("--fills", type=Path, required=True)
-    tca.add_argument("--bars", type=Path, required=True)
-    tca.add_argument("--fees-per-share", type=float, default=0.0)
     tca.add_argument(
-        "--delay-basis", choices=[b.value for b in DelayBasis], default=DelayBasis.ORDER.value
+        "--orders", type=Path, required=True, help="the order book: one target per order"
     )
-    tca.add_argument("--group-by", choices=["symbol", "side"], default="symbol")
-    tca.add_argument("--outlier-threshold", type=float, default=3.5)
-    tca.add_argument("--json", action="store_true")
+    tca.add_argument("--fills", type=Path, required=True, help="the fills those orders got")
+    tca.add_argument(
+        "--bars",
+        type=Path,
+        required=True,
+        help="price and volume bars, which supply the arrival and closing marks",
+    )
+    tca.add_argument(
+        "--fees-per-share",
+        type=float,
+        default=0.0,
+        help="commission and exchange fees, charged on executed shares",
+    )
+    tca.add_argument(
+        "--delay-basis",
+        choices=[b.value for b in DelayBasis],
+        default=DelayBasis.ORDER.value,
+        help="which shares delay cost is charged on. A convention, not a fact: "
+        "'order' charges the full target, since the whole order sat idle, and "
+        "'executed' charges only what traded. Both split the same total -- only "
+        "the boundary between delay and opportunity moves.",
+    )
+    tca.add_argument(
+        "--group-by",
+        choices=["symbol", "side"],
+        default="symbol",
+        help="which breakdown to print beside the total",
+    )
+    tca.add_argument(
+        "--outlier-threshold",
+        type=float,
+        default=3.5,
+        help="modified z-score above which an order is flagged. Built on the "
+        "median and the MAD rather than the mean and the standard deviation, "
+        "which outliers inflate until they hide themselves.",
+    )
+    tca.add_argument("--json", action="store_true", help="machine readable output")
 
     schedule = sub.add_parser("schedule", help="compute an execution schedule")
     _add_problem_arguments(schedule)
-    schedule.add_argument("--risk-aversion", type=float, required=True)
-    schedule.add_argument("--lot-size", type=float, default=None)
-    schedule.add_argument("--max-trade", type=_float_list, default=None)
-    schedule.add_argument("--min-trade", type=_float_list, default=None)
-    schedule.add_argument("--json", action="store_true")
+    schedule.add_argument(
+        "--risk-aversion",
+        type=float,
+        required=True,
+        help="how much variance of the unexecuted position costs, per unit of "
+        "it. Zero trades at a constant rate; raising it front-loads the "
+        "schedule, and the curvature it buys goes as its square root.",
+    )
+    schedule.add_argument(
+        "--lot-size",
+        type=float,
+        default=None,
+        help="round every trade to a multiple of this. Omitted, the schedule is continuous.",
+    )
+    schedule.add_argument(
+        "--max-trade",
+        type=_float_list,
+        default=None,
+        help="per-period ceiling on the trade, one value or one per period",
+    )
+    schedule.add_argument(
+        "--min-trade",
+        type=_float_list,
+        default=None,
+        help="per-period floor on the trade, one value or one per period",
+    )
+    schedule.add_argument("--json", action="store_true", help="machine readable output")
 
     forecast = sub.add_parser(
         "forecast",
@@ -199,7 +251,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     _add_problem_arguments(forecast)
-    forecast.add_argument("--risk-aversion", type=float, required=True)
+    forecast.add_argument(
+        "--risk-aversion",
+        type=float,
+        required=True,
+        help="how much variance of the unexecuted position costs, per unit of it",
+    )
     forecast.add_argument(
         "--drifts",
         type=_float_list,
@@ -227,7 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
     forecast.add_argument(
         "--price", type=float, default=50.0, help="share price, for the basis points"
     )
-    forecast.add_argument("--json", action="store_true")
+    forecast.add_argument("--json", action="store_true", help="machine readable output")
 
     robust = sub.add_parser(
         "robust",
@@ -243,7 +300,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     _add_problem_arguments(robust)
-    robust.add_argument("--risk-aversion", type=float, required=True)
+    robust.add_argument(
+        "--risk-aversion",
+        type=float,
+        required=True,
+        help="how much variance of the unexecuted position costs, per unit of it",
+    )
     robust.add_argument(
         "--factors",
         type=_float_list,
@@ -256,14 +318,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=2.0,
         help="factor either way over which the robust schedule is hedged",
     )
-    robust.add_argument("--json", action="store_true")
+    robust.add_argument("--json", action="store_true", help="machine readable output")
 
     frontier = sub.add_parser("frontier", help="expected cost against risk")
     _add_problem_arguments(frontier)
     frontier.add_argument(
-        "--risk-aversions", type=_float_list, default=[0.0, 1e-8, 1e-7, 1e-6, 1e-5]
+        "--risk-aversions",
+        type=_float_list,
+        default=[0.0, 1e-8, 1e-7, 1e-6, 1e-5],
+        help="the risk aversions to trace the frontier over, cheapest first. "
+        "The default spans four decades, which is where the curve bends.",
     )
-    frontier.add_argument("--json", action="store_true")
+    frontier.add_argument("--json", action="store_true", help="machine readable output")
 
     marks = sub.add_parser(
         "markouts",
@@ -274,9 +340,13 @@ def build_parser() -> argparse.ArgumentParser:
             "horizons the market's move is larger than the impact being measured."
         ),
     )
-    marks.add_argument("--orders", type=Path, required=True)
-    marks.add_argument("--fills", type=Path, required=True)
-    marks.add_argument("--bars", type=Path, required=True)
+    marks.add_argument(
+        "--orders", type=Path, required=True, help="the order book: one target per order"
+    )
+    marks.add_argument("--fills", type=Path, required=True, help="the fills those orders got")
+    marks.add_argument(
+        "--bars", type=Path, required=True, help="price and volume bars, which supply the marks"
+    )
     marks.add_argument(
         "--horizons",
         type=_horizon_list,
@@ -301,7 +371,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=1.0,
         help="how much of the benchmark's move to subtract. Defaults to 1.",
     )
-    marks.add_argument("--json", action="store_true")
+    marks.add_argument("--json", action="store_true", help="machine readable output")
 
     liquidate = sub.add_parser(
         "basket",
@@ -338,15 +408,20 @@ def build_parser() -> argparse.ArgumentParser:
         "built from the holdings file. Trading one name moves the others, and with "
         "this the schedules couple even when the returns do not.",
     )
-    liquidate.add_argument("--horizon", type=float, default=1.0)
-    liquidate.add_argument("--periods", type=int, default=20)
-    liquidate.add_argument("--risk-aversion", type=float, required=True)
+    liquidate.add_argument("--horizon", type=float, default=1.0, help="time available")
+    liquidate.add_argument("--periods", type=int, default=20, help="number of intervals")
+    liquidate.add_argument(
+        "--risk-aversion",
+        type=float,
+        required=True,
+        help="how much variance of the unexecuted position costs, per unit of it",
+    )
     liquidate.add_argument(
         "--compare",
         action="store_true",
         help="also solve it leg by leg and report what the joint solution saves",
     )
-    liquidate.add_argument("--json", action="store_true")
+    liquidate.add_argument("--json", action="store_true", help="machine readable output")
 
     transient = sub.add_parser(
         "transient",
@@ -360,9 +435,9 @@ def build_parser() -> argparse.ArgumentParser:
             "a constant rate, and a block."
         ),
     )
-    transient.add_argument("--quantity", type=float, required=True)
-    transient.add_argument("--horizon", type=float, required=True)
-    transient.add_argument("--periods", type=int, required=True)
+    transient.add_argument("--quantity", type=float, required=True, help="shares to execute")
+    transient.add_argument("--horizon", type=float, required=True, help="time available")
+    transient.add_argument("--periods", type=int, required=True, help="number of intervals")
     transient.add_argument(
         "--gamma", type=float, default=0.0, help="permanent impact, price per share"
     )
@@ -388,7 +463,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="use a power-law kernel with this exponent, scaled by --half-life",
     )
-    transient.add_argument("--json", action="store_true")
+    transient.add_argument("--json", action="store_true", help="machine readable output")
 
     adaptive = sub.add_parser(
         "adaptive",
@@ -406,9 +481,9 @@ def build_parser() -> argparse.ArgumentParser:
             "adapting can claim."
         ),
     )
-    adaptive.add_argument("--quantity", type=float, required=True)
-    adaptive.add_argument("--horizon", type=float, required=True)
-    adaptive.add_argument("--periods", type=int, required=True)
+    adaptive.add_argument("--quantity", type=float, required=True, help="shares to execute")
+    adaptive.add_argument("--horizon", type=float, required=True, help="time available")
+    adaptive.add_argument("--periods", type=int, required=True, help="number of intervals")
     adaptive.add_argument(
         "--gamma", type=float, default=0.0, help="permanent impact, price per share"
     )
@@ -465,8 +540,8 @@ def build_parser() -> argparse.ArgumentParser:
             "which shares no arithmetic with the recursion"
         ),
     )
-    adaptive.add_argument("--seed", type=int, default=0)
-    adaptive.add_argument("--json", action="store_true")
+    adaptive.add_argument("--seed", type=int, default=0, help="seed for the simulated price paths")
+    adaptive.add_argument("--json", action="store_true", help="machine readable output")
 
     placement = sub.add_parser(
         "placement",
@@ -548,8 +623,10 @@ def build_parser() -> argparse.ArgumentParser:
     placement.add_argument(
         "--steps", type=int, default=1000, help="observations per simulated path"
     )
-    placement.add_argument("--seed", type=int, default=0)
-    placement.add_argument("--json", action="store_true")
+    placement.add_argument(
+        "--seed", type=int, default=0, help="seed for the simulated queue and fills"
+    )
+    placement.add_argument("--json", action="store_true", help="machine readable output")
 
     vwap = sub.add_parser(
         "vwap",
@@ -623,7 +700,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="W",
         help="score another schedule, such as an arrival-price trajectory, against VWAP",
     )
-    vwap.add_argument("--json", action="store_true")
+    vwap.add_argument("--json", action="store_true", help="machine readable output")
 
     capacity = sub.add_parser(
         "capacity",
@@ -677,7 +754,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.0,
         help="mean-variance penalty; a positive value also reports an optimal horizon",
     )
-    capacity.add_argument("--json", action="store_true")
+    capacity.add_argument("--json", action="store_true", help="machine readable output")
 
     routing = sub.add_parser(
         "route",
@@ -753,7 +830,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="also enumerate every allocation and report the gap, if the problem is small enough",
     )
-    routing.add_argument("--json", action="store_true")
+    routing.add_argument("--json", action="store_true", help="machine readable output")
 
     spread = sub.add_parser(
         "spread",
@@ -783,14 +860,20 @@ def build_parser() -> argparse.ArgumentParser:
     spread.add_argument(
         "--volatility", type=float, default=0.02, help="daily volatility of the efficient price"
     )
-    spread.add_argument("--seed", type=int, default=1000)
-    spread.add_argument("--json", action="store_true")
+    spread.add_argument(
+        "--seed", type=int, default=1000, help="seed for the bars, when they are simulated"
+    )
+    spread.add_argument("--json", action="store_true", help="machine readable output")
 
     sample = sub.add_parser("sample-data", help="write a synthetic book to CSV")
-    sample.add_argument("--out", type=Path, required=True)
-    sample.add_argument("--seed", type=int, default=0)
-    sample.add_argument("--orders", type=int, default=60)
-    sample.add_argument("--symbols", type=int, default=8)
+    sample.add_argument(
+        "--out", type=Path, required=True, help="directory to write the three files into"
+    )
+    sample.add_argument("--seed", type=int, default=0, help="seed for the generated book")
+    sample.add_argument("--orders", type=int, default=60, help="how many orders to write")
+    sample.add_argument(
+        "--symbols", type=int, default=8, help="how many symbols to spread them over"
+    )
     return parser
 
 
