@@ -939,3 +939,20 @@ announce itself. Make the bounce strictly alternate instead of being drawn
 independently and the covariance is the whole squared spread rather than a
 quarter of it, so the estimator returns **exactly twice** the truth — a wrong
 number rather than a refusal.
+
+## Phase 21 — The command line explains itself
+
+- [x] Help text on every option, the required ones included — a required
+      argument with no description is the worst case, since it has to be
+      supplied and cannot be left alone
+- [x] The conventions described rather than listed: the delay basis moves the
+      boundary between delay and opportunity cost without changing the total,
+      and the outlier threshold is a modified z-score for the reason a z-score
+      cannot do the job
+- [x] A parametrised sweep that renders `--help` for the root parser and every
+      subcommand, since a help string is expanded only when it is displayed
+- [x] Commands enumerated by walking the parser, recursively, rather than
+      listed by hand
+- [x] A completeness check that every argument carries help at all
+- [x] The sweep verified against the regression it exists for
+- [x] The same sweep in CI against the built wheel
