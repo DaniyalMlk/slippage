@@ -56,6 +56,29 @@ jobs:
           /tmp/clean/bin/pip install dist/*.whl
           cd /tmp && /tmp/clean/bin/python -c "import slippage; print(slippage.__version__)"
           /tmp/clean/bin/slippage --version
+      # Every command's --help, against the artefact that would be published.
+      # argparse expands help strings through %-formatting at display time, so
+      # a literal per cent sign raises TypeError there and nowhere else: the
+      # suite exercises the commands and the commands work. Only --help is
+      # broken, and it is the first thing anybody types.
+      - name: Every command prints help
+        run: |
+          /tmp/clean/bin/slippage --help > /dev/null
+          for sub in $(/tmp/clean/bin/python - <<'PY'
+          import argparse
+          from slippage.cli import build_parser
+          for action in build_parser()._actions:
+              if isinstance(action, argparse._SubParsersAction):
+                  print(" ".join(sorted(action.choices)))
+                  break
+          PY
+          ); do
+            /tmp/clean/bin/slippage "$sub" --help > /dev/null || {
+              echo "slippage $sub --help failed"; exit 1; }
+          done
+          echo "every command printed help"
+      - name: The installed command line runs over generated data
+        run: |
           /tmp/clean/bin/slippage sample-data --out /tmp/book
           /tmp/clean/bin/slippage tca --orders /tmp/book/orders.csv --fills /tmp/book/fills.csv --bars /tmp/book/bars.csv
           /tmp/clean/bin/slippage markouts --orders /tmp/book/orders.csv --fills /tmp/book/fills.csv --bars /tmp/book/bars.csv
