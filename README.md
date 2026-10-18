@@ -18,6 +18,65 @@ exhaustive enumeration. Each section below states what was measured and how.
 
 See [ROADMAP.md](ROADMAP.md) for the build order.
 
+## What is checked, and against what
+
+Here is what that paragraph means, before the install line. The order of the
+rows is deliberate: the first two are checked against *enumeration*, not
+against a formula. Every figure is produced by `examples/evidence.py`, which
+runs in CI and exits non-zero if any of them moves:
+
+| Check | Result |
+| --- | --- |
+| The schedule solver against exhaustive enumeration of all 1,820 schedules, 12 cases | worst relative gap 1e-14, capped and uncapped |
+| The router against exhaustive search, 250 random problems | at the optimum in all 250, worst excess cost 0 |
+| A 2,000-lot grid against the Almgren-Chriss closed form | every trade within one lot of the continuum solution |
+| The same grid's objective against the continuum's | never below it, the grid being a subset of the continuum |
+| The response kernel at zero urgency, against a tent | curvature 1e-14 of its peak away from the spike; 2e-02 at an urgency of 1e-6, so the shape is a result |
+| Implementation shortfall against the same sum done by hand | identical on every component, to the cent |
+
+**Why enumeration comes first.** A solver checked against a closed form is
+checked against a rearrangement of the same mathematics, and a sign error made
+in both places agrees with itself. Enumeration contains no derivation at all —
+only the objective, evaluated at every point of a finite set — so it cannot
+hold the same mistake. Twelve lots over five periods is 1,820 schedules, small
+enough to enumerate and large enough that the optimum is not obvious; the
+capped cases matter most, because an unconstrained problem is one a closed form
+could have answered anyway.
+
+The router is checked on *random* problems rather than hand-picked ones, since
+a hand-picked routing problem is one whose answer the person picking it could
+see. Its default search radius is a local move limit, so the question being
+asked is whether a local search reaches the global optimum. On 250 problems it
+did, every time, with an excess cost of exactly zero.
+
+**Two rows are results, not tolerances.**
+
+The grid's objective is checked for never being *below* the continuum's. The
+lot grid is a subset of the continuum, so the best schedule on the grid cannot
+cost less than the best schedule in the continuum — and a programme reporting a
+lower objective would not be more accurate, it would be wrong. A tolerance on
+the signed difference would accept it. So the bound is zero on how far below it
+goes: a tie passes, an improvement does not. Measured, the grid comes out at
+130.626543 against the continuum's 130.626537, which is the right side.
+
+The kernel's shape is measured twice. At zero urgency the kernel of the
+quadratic execution problem is the Green's function of a discrete Laplacian,
+which means every row is linear away from its own spike — a tent. The
+parameter-free way to say that is that a row's second difference vanishes
+except at the spike, needing no fitted scale and no reference implementation:
+1.2e-16 of the peak. On its own that figure would say nothing about whether the
+shape was derived or assumed, since a kernel that had been linearised
+somewhere would also be a tent. At an urgency of 1e-6 the same curvature is
+1.9e-2 of the peak, so it is a shape the problem produces at one end of its
+range and not the other.
+
+```bash
+python examples/evidence.py     # all six, non-zero if a figure moves
+```
+
+Behind them: 1023 tests on Python 3.10 through 3.13, including
+Hypothesis-generated cap and floor combinations and infeasible ones.
+
 ## Install
 
 ```bash
