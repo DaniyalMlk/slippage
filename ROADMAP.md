@@ -956,3 +956,31 @@ number rather than a refusal.
 - [x] A completeness check that every argument carries help at all
 - [x] The sweep verified against the regression it exists for
 - [x] The same sweep in CI against the built wheel
+
+## Phase 22 — The evidence goes above the install line
+
+- [x] One script recomputing every figure the front page quotes, with the two
+      checks against enumeration first: a solver checked against a closed form
+      is checked against a rearrangement of the same mathematics, and a sign
+      error made in both places agrees with itself
+- [x] The schedule solver against all 1,820 ways to split twelve lots over five
+      periods — two impact models, three risk aversions, capped and uncapped,
+      with the capped cases mattering most since an unconstrained problem is one
+      a closed form could have answered anyway
+- [x] The router against every allocation on randomly generated problems rather
+      than hand-picked ones, a hand-picked problem being one whose answer the
+      person picking it could see
+- [x] The lot grid's objective checked for never being *below* the continuum's,
+      not for agreeing with it: the grid is a subset, so a lower objective is
+      wrong rather than more accurate, and a tolerance on the signed difference
+      would accept it
+- [x] The response kernel measured as a tent at zero urgency *and* as not a
+      tent at a positive one, since either figure alone cannot distinguish a
+      shape the problem produces from one something linearised into it
+- [x] Tentness stated parameter-free — a row's second difference vanishing away
+      from its own spike — so no scale is fitted and no reference implemented
+- [x] The enumeration sizes pinned, because "checked against enumeration" is
+      only as strong as the set enumerated and a quiet reduction would weaken
+      the front page without changing a figure
+- [x] Three directions of the pin, including the rendered claim against the
+      bound the check enforces, which nothing else covers
