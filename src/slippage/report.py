@@ -28,9 +28,9 @@ import statistics
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
-from .benchmarks import Benchmark, score_order
+from .benchmarks import Benchmark, own_share, score_order
 from .costs import BPS_PER_UNIT
-from .exceptions import NoVolumeError, ValidationError
+from .exceptions import InsufficientDataError, NoVolumeError, ValidationError
 from .impact import SquareRootLaw
 from .series import BarSeries
 from .shortfall import DelayBasis, ShortfallBreakdown, participation_rate, shortfall_from_market
@@ -61,8 +61,36 @@ class OrderReport:
     side: Side
     shortfall: ShortfallBreakdown
     participation: float
+    """Executed quantity over market volume, from the bar containing arrival.
+
+    Not the rate that explains :attr:`vwap_bps` -- see
+    :attr:`benchmark_participation`, which is measured over the benchmark's own
+    window and is the one the decomposition holds for.
+    """
+
     vwap_bps: float | None
-    """Cost of the filled part against interval VWAP; ``None`` when unfilled."""
+    """Cost of the filled part against interval VWAP; ``None`` when unfilled.
+
+    Against the bars as recorded, so against a benchmark these prints are part
+    of. :attr:`vwap_ex_own_bps` is the same cost with them removed.
+    """
+
+    vwap_ex_own_bps: float | None = None
+    """The same cost against a benchmark the order had no part in setting.
+
+    ``None`` when the correction cannot be made: no fills, no volume, or an
+    order whose own prints are all of the volume the bars record -- where the
+    market VWAP *is* the order's average price and the uncorrected figure is
+    zero by construction.
+    """
+
+    benchmark_participation: float | None = None
+    """The order's share of volume over the benchmark's window.
+
+    The ``p`` for which ``vwap_bps`` is ``(1 - p)`` times ``vwap_ex_own_bps``,
+    up to the ratio of the two reference prices. ``None`` alongside
+    :attr:`vwap_ex_own_bps`.
+    """
 
     @property
     def total_bps(self) -> float:
@@ -82,6 +110,8 @@ class OrderReport:
             "total_bps": self.total_bps,
             "participation": self.participation,
             "vwap_bps": self.vwap_bps,
+            "vwap_ex_own_bps": self.vwap_ex_own_bps,
+            "benchmark_participation": self.benchmark_participation,
         }
 
 
@@ -215,11 +245,26 @@ def build_report(
             delay_basis=delay_basis,
         )
         vwap_bps: float | None = None
+        vwap_ex_own_bps: float | None = None
+        benchmark_participation: float | None = None
         if order.fills:
             try:
                 vwap_bps = score_order(order, series, Benchmark.INTERVAL_VWAP).cost_bps
             except NoVolumeError:
                 vwap_bps = None
+            # Separately, and allowed to fail on its own: an order that was the
+            # whole of the recorded volume has a VWAP cost of zero and no
+            # benchmark to correct it against, which is a fact about that order
+            # rather than a reason to drop its uncorrected figure.
+            try:
+                share = own_share(order, series)
+            except (NoVolumeError, ValidationError, InsufficientDataError):
+                share = None
+            if share is not None:
+                vwap_ex_own_bps = score_order(
+                    order, series, Benchmark.INTERVAL_VWAP_EX_OWN
+                ).cost_bps
+                benchmark_participation = share.rate
         try:
             participation = participation_rate(order, series)
         except ValidationError:
@@ -232,6 +277,8 @@ def build_report(
                 shortfall=shortfall,
                 participation=participation,
                 vwap_bps=vwap_bps,
+                vwap_ex_own_bps=vwap_ex_own_bps,
+                benchmark_participation=benchmark_participation,
             )
         )
     return TcaReport(orders=tuple(rows))

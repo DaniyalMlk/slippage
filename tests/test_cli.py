@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import math
+import re
 from pathlib import Path
 
 import pytest
@@ -1258,3 +1259,48 @@ class TestSpread:
     def test_it_refuses_to_guess_between_symbols(self, sample: Path) -> None:
         code, _ = run("spread", "--bars", str(sample / "bars.csv"))
         assert code == 2
+
+
+class TestVwapContamination:
+    """The two VWAP figures, over the wire."""
+
+    def test_the_text_report_states_both_and_the_rate_between_them(self, sample: Path) -> None:
+        code, text = run(*tca_args(sample))
+        assert code == 0
+        line = next(x for x in text.splitlines() if x.startswith("VWAP cost over"))
+        assert "against the bars as recorded" in line
+        assert "no part in setting" in text
+        assert "the share of volume taken" in text
+
+    def test_the_corrected_figure_is_the_larger_one(self, sample: Path) -> None:
+        """Read off the printed line, so this is about the report rather than the library."""
+        code, text = run(*tca_args(sample))
+        assert code == 0
+        tail = text[text.index("VWAP cost over") :]
+        numbers = [float(m) for m in re.findall(r"[+-]\d+\.\d+(?= bps| against|$)", tail)]
+        assert len(numbers) >= 2, tail
+        reported, honest = numbers[0], numbers[1]
+        assert abs(honest) > abs(reported)
+
+    def test_the_book_level_factor_is_explained_rather_than_implied(self, sample: Path) -> None:
+        """The participation rates alone would invite arithmetic that does not hold.
+
+        The mean rate and the factor the book actually moves by are different
+        numbers, because participation and cost correlate, so the report says
+        which and why instead of leaving a reader to multiply.
+        """
+        code, text = run(*tca_args(sample))
+        assert code == 0
+        assert "The book moves by a factor of" in text
+        assert "took the most volume are the ones that cost the most" in text
+
+    def test_the_json_carries_both_per_order(self, sample: Path) -> None:
+        code, text = run(*tca_args(sample), "--json")
+        assert code == 0
+        rows = json.loads(text)["orders"]
+        corrected = [r for r in rows if r["vwap_ex_own_bps"] is not None]
+        assert len(corrected) >= len(rows) - 2
+        for row in corrected:
+            rate = row["benchmark_participation"]
+            assert 0.0 < rate < 1.0
+            assert row["vwap_bps"] / row["vwap_ex_own_bps"] == pytest.approx(1.0 - rate, abs=5e-3)

@@ -903,6 +903,8 @@ def _print_report(report: TcaReport, group_by: str, threshold: float, out: TextI
     line("all", total.orders, total.bps(), total.total_bps)
     print("(basis points of paper notional)", file=out)
 
+    _print_vwap_contamination(report, out)
+
     flagged = report.outliers(threshold)
     print(file=out)
     if not flagged:
@@ -915,6 +917,51 @@ def _print_report(report: TcaReport, group_by: str, threshold: float, out: TextI
             f"{row.total_bps:+9.2f} bps   z = {z:+.1f}",
             file=out,
         )
+
+
+def _print_vwap_contamination(report: TcaReport, out: TextIO) -> None:
+    """What the VWAP figures would be against a benchmark these orders did not set.
+
+    Printed rather than left in the JSON because the uncorrected number is the
+    one that gets read, and it is smaller by the participation rate: a book
+    trading a fifth of the volume under-reports its VWAP cost by a fifth.
+    """
+    pairs = [
+        (row.vwap_bps, row.vwap_ex_own_bps, row.benchmark_participation)
+        for row in report.orders
+        if row.vwap_bps is not None
+        and row.vwap_ex_own_bps is not None
+        and row.benchmark_participation is not None
+    ]
+    if not pairs:
+        return
+    reported = sum(value for value, _, _ in pairs) / len(pairs)
+    honest = sum(value for _, value, _ in pairs) / len(pairs)
+    rates = sorted(rate for _, _, rate in pairs)
+    median = rates[len(rates) // 2]
+    mean_rate = sum(rates) / len(rates)
+    print(file=out)
+    print(
+        f"VWAP cost over {len(pairs)} filled order(s): {reported:+.2f} bps against the bars "
+        f"as recorded\nand {honest:+.2f} against a benchmark these orders had no part in "
+        "setting. Exchange volume\nincludes their own prints, so order by order the first is "
+        "(1 - p) times the second, with\np the share of volume taken: a median of "
+        f"{median:.1%} and a mean of {mean_rate:.1%}.",
+        file=out,
+    )
+    # The book-level ratio is not 1 - mean(p), and saying so is the point: the
+    # line above would otherwise invite arithmetic that does not hold. On the
+    # shipped sample book the participation rate and the cost correlate at
+    # 0.54, so the average moves further than either rate suggests.
+    if honest != 0.0:
+        implied = reported / honest
+        if implied < 1.0 - mean_rate:
+            print(
+                f"The book moves by a factor of {implied:.2f} rather than "
+                f"{1.0 - mean_rate:.2f}, because the orders\nthat took the most volume are "
+                "the ones that cost the most.",
+                file=out,
+            )
 
 
 def _run_tca(args: argparse.Namespace, out: TextIO) -> None:
