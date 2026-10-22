@@ -38,7 +38,15 @@ from .basket import (
     hedge_direction,
     independent_trajectories,
 )
-from .benchmarks import Benchmark, Score, benchmark_price, order_window, score_order
+from .benchmarks import (
+    Benchmark,
+    OwnShare,
+    Score,
+    benchmark_price,
+    order_window,
+    own_share,
+    score_order,
+)
 from .calibration import (
     Estimate,
     ExecutionSample,
@@ -288,6 +296,7 @@ __all__ = [
     "OrderReport",
     "Outcome",
     "Outflow",
+    "OwnShare",
     "Placement",
     "Point",
     "PovSchedule",
@@ -387,6 +396,7 @@ __all__ = [
     "optimal_trajectory",
     "optimal_transient_schedule",
     "order_window",
+    "own_share",
     "participation_caps",
     "participation_rate",
     "permanent_moves_from_orders",
