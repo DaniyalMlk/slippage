@@ -35,9 +35,12 @@ import random
 import runpy
 import sys
 from contextlib import redirect_stdout
+from datetime import datetime, timedelta
 from io import StringIO
 from pathlib import Path
 from typing import NamedTuple
+
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -330,12 +333,98 @@ def shortfall_against_arithmetic_by_hand() -> Check:
     )
 
 
+def ex_own_vwap_against_a_known_counterparty() -> tuple[Check, float, float]:
+    """Recover the other traders' VWAP from bars that contain the order's prints too.
+
+    The reference here is a *construction* rather than a formula. Two hundred
+    books are built from explicit prints: a set the order did and a set it did
+    not, each with its own quantity and price. Each bar's volume is the sum of
+    both and its price is their blend, which is what an exchange tape reports
+    and what the library's typical-price estimate recovers when the bar is
+    flat. The others' VWAP is then known before the library is asked -- it is
+    the volume-weighted average of the prints the order had no part in -- and
+    the correction has to return that number.
+
+    This contains no derivation shared with the library. The generator never
+    computes a participation rate or a difference of notionals; it knows the
+    answer because it wrote the prints down.
+
+    Returns the worst relative recovery error, and the range of ``1 - p`` over
+    the two hundred books, which is what the uncorrected benchmark is wrong by.
+    """
+    rng = np.random.default_rng(20261022)
+    worst = 0.0
+    factors = []
+    for _ in range(200):
+        bars = []
+        own_fills = []
+        others_quantity = 0.0
+        others_notional = 0.0
+        start = datetime(2026, 3, 2, 9, 30)
+        for index in range(5):
+            timestamp = start + timedelta(minutes=index)
+            others_volume = float(rng.uniform(500.0, 3000.0))
+            others_price = 100.0 + float(rng.normal(0.0, 0.2))
+            own_volume = float(rng.uniform(0.0, 1200.0))
+            own_price = others_price + float(rng.normal(0.0, 0.05))
+            others_quantity += others_volume
+            others_notional += others_volume * others_price
+            if own_volume > 0.0:
+                own_fills.append(
+                    sl.Fill(
+                        timestamp=timestamp + timedelta(seconds=20),
+                        quantity=own_volume,
+                        price=own_price,
+                    )
+                )
+            volume = others_volume + own_volume
+            blend = (others_volume * others_price + own_volume * own_price) / volume
+            bars.append(
+                sl.Bar(
+                    timestamp=timestamp,
+                    open=blend,
+                    high=blend,
+                    low=blend,
+                    close=blend,
+                    volume=volume,
+                )
+            )
+        series = sl.BarSeries(bars)
+        order = sl.Order(
+            symbol="ACME",
+            side=sl.Side.BUY,
+            quantity=sum(fill.quantity for fill in own_fills),
+            decision_time=start,
+            arrival_time=start,
+            fills=tuple(own_fills),
+        )
+        known = others_notional / others_quantity
+        share = sl.own_share(order, series)
+        worst = max(worst, abs(share.ex_own_vwap - known) / known)
+        factors.append(1.0 - share.rate)
+    return (
+        Check(
+            label="The ex-own VWAP against a book whose other prints are known, 200 books",
+            measured=worst,
+            bound=1e-12,
+            rendered=(
+                f"recovers their VWAP to 1e-12 relative, where the uncorrected "
+                f"benchmark understates by {1.0 - max(factors):.0%} to "
+                f"{1.0 - min(factors):.0%}"
+            ),
+        ),
+        min(factors),
+        max(factors),
+    )
+
+
 def main() -> dict[str, object]:
     """Run every check, print the table, and return the figures."""
     schedule, cases, schedules = schedule_against_enumeration()
     routing, checked, optimal = routing_against_exhaustive_search()
     trades, objective, grid_value, continuum_value = grid_against_the_closed_form()
     kernel, flat, urgent = kernel_shape()
+    ex_own, least_factor, most_factor = ex_own_vwap_against_a_known_counterparty()
     checks = [
         schedule,
         routing,
@@ -343,6 +432,7 @@ def main() -> dict[str, object]:
         objective,
         kernel,
         shortfall_against_arithmetic_by_hand(),
+        ex_own,
     ]
 
     print("What is checked, and against what")
@@ -387,6 +477,7 @@ def main() -> dict[str, object]:
         "grid_objective": grid_value,
         "continuum_objective": continuum_value,
         "curvature": (flat, urgent),
+        "ex_own_factors": (least_factor, most_factor),
     }
 
 

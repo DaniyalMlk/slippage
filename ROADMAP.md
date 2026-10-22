@@ -984,3 +984,62 @@ number rather than a refusal.
       the front page without changing a figure
 - [x] Three directions of the pin, including the rendered claim against the
       bound the check enforces, which nothing else covers
+
+## Phase 23 — Whose volume is in the benchmark
+
+`benchmarks.py` argued about one convention in its module docstring — the
+window being the life of the order rather than the whole day — and was silent
+on the other. Exchange volume includes the order's own prints, so a VWAP built
+from those bars is a benchmark the order helped set, and `slippage tca` has
+printed the participation rate and the VWAP cost in adjacent columns since it
+was written without connecting them.
+
+- [x] The decomposition `vwap_market = p * own_average + (1 - p) * vwap_ex_own`,
+      so the cost against the recorded benchmark is `(1 - p)` times the cost
+      against one the order had no part in
+- [x] `Benchmark.INTERVAL_VWAP_EX_OWN`, so the corrected benchmark goes through
+      `benchmark_price` and `score_order` like every other
+- [x] `own_share`, reporting the decomposition over the benchmark's own window,
+      which is not the window the participation rate uses
+- [x] The identity exact in currency, where the quantity is the same both
+      times, and `(1 - p)` times the ratio of the two references in basis
+      points, where `cost_bps` normalises by the reference — measured, since
+      that is the one place it is not clean
+- [x] The degenerate limit asserted before it is refused: an order that was the
+      whole of the recorded volume scores exactly zero whatever it paid
+- [x] A separate refusal for own volume *exceeding* the recorded volume, which
+      is a data problem rather than a correction and would otherwise subtract
+      volume nobody added
+- [x] Both figures per order in the report and in its JSON, and the book-level
+      pair in the text, since the uncorrected number is the one that is read
+- [x] An evidence row whose reference is a construction rather than a formula:
+      two hundred books built from explicit prints, half the order's and half
+      not, where the other traders' VWAP is known before the library is asked
+- [x] Seven ways of breaking the correction confirmed to fail first
+
+What it came to. On the shipped sample book the VWAP cost is +8.91 bps against
+the bars as recorded and +11.67 against a benchmark the orders had no part in
+setting, at a median participation of 9.7%. Over two hundred constructed books
+the uncorrected benchmark understates by between 8% and 52%, and the correction
+recovers the known answer to 6e-16.
+
+Three things the measuring turned up that the arithmetic did not.
+
+The book-level ratio is not one minus the mean participation rate. It is 0.76
+against the 0.86 the mean implies, because participation and cost correlate at
+0.54 — the orders that take the most volume are the ones that cost the most. A
+report that printed the rates and left the reader to multiply would have been
+inviting a wrong number, so it prints the factor and the reason.
+
+The window the correction needs is not the window `participation_rate` uses.
+That function starts at the bar containing arrival by a deliberate choice;
+`order_window` starts at arrival. With a mid-bar arrival they give 0.200 and
+0.278, and only the second satisfies the decomposition. Which one a VWAP
+benchmark *should* use is a convention and changing it would move every
+existing number, so it is reported rather than resolved.
+
+And the synthetic book cannot show any of that: every order in it arrives on a
+bar boundary, so the two rates coincide there. The suite asserts that they do,
+because it is the reason the discrepancy was never visible, and a suite that
+only ran against the generated fixture would have concluded the two fields were
+one quantity.

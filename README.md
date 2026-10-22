@@ -33,6 +33,7 @@ runs in CI and exits non-zero if any of them moves:
 | The same grid's objective against the continuum's | never below it, the grid being a subset of the continuum |
 | The response kernel at zero urgency, against a tent | curvature 1e-14 of its peak away from the spike; 2e-02 at an urgency of 1e-6, so the shape is a result |
 | Implementation shortfall against the same sum done by hand | identical on every component, to the cent |
+| The ex-own VWAP against a book whose other prints are known, 200 books | recovers their VWAP to 1e-12 relative, where the uncorrected benchmark understates by 8% to 52% |
 
 **Why enumeration comes first.** A solver checked against a closed form is
 checked against a rearrangement of the same mathematics, and a sign error made
@@ -42,6 +43,15 @@ hold the same mistake. Twelve lots over five periods is 1,820 schedules, small
 enough to enumerate and large enough that the optimum is not obvious; the
 capped cases matter most, because an unconstrained problem is one a closed form
 could have answered anyway.
+
+**The last row's reference is a construction, not a formula.** Two hundred
+books are built from explicit prints — a set the order did and a set it did
+not, each with its own quantity and price — so the other traders' VWAP is known
+before the library is asked: it is the volume-weighted average of the prints
+the order had no part in. The generator never computes a participation rate or
+a difference of notionals; it knows the answer because it wrote the prints
+down. The correction recovers it to 6e-16, and over those books the
+uncorrected benchmark understates the cost by between 8% and 52%.
 
 The router is checked on *random* problems rather than hand-picked ones, since
 a hand-picked routing problem is one whose answer the person picking it could
@@ -74,7 +84,7 @@ range and not the other.
 python examples/evidence.py     # all six, non-zero if a figure moves
 ```
 
-Behind them: 1023 tests on Python 3.10 through 3.13, including
+Behind them: 1052 tests on Python 3.10 through 3.13, including
 Hypothesis-generated cap and floor combinations and infeasible ones.
 
 ## Install
@@ -231,6 +241,77 @@ questions. Arrival measures what trading cost relative to doing nothing;
 interval VWAP measures whether the order kept pace with the market while it
 traded; the close rewards any buy that finished before a rally. Choosing the
 benchmark is choosing the question.
+
+### Whose volume is in the benchmark
+
+Choosing the window is the convention that gets argued about. Choosing whose
+prints are in the benchmark is the one that gets missed, and it is the larger
+of the two.
+
+Exchange volume includes the order's own fills, so a VWAP built from those bars
+is a benchmark the order helped set. Over any window it decomposes as
+
+```
+vwap_market = p * own_average + (1 - p) * vwap_ex_own
+```
+
+with `p` the order's share of the window's volume, and therefore
+
+```
+own_average - vwap_market = (1 - p) * (own_average - vwap_ex_own)
+```
+
+So the cost reported against the market VWAP is **`(1 - p)` times** the cost
+against a benchmark the order had no part in. At 28% participation the number
+is 28% too small. At 100% — a block crossed while nothing else traded — the
+market VWAP *is* the order's average price and the reported cost is exactly
+zero whatever was paid, which the library now refuses rather than reports.
+
+```python
+from slippage import own_share
+
+share = own_share(order, bars)
+share.rate  # p, over the benchmark's own window
+share.market_vwap  # the benchmark as recorded
+share.ex_own_vwap  # what the rest of the market paid
+score_order(order, bars, Benchmark.INTERVAL_VWAP_EX_OWN)
+```
+
+`slippage tca` reports both, because the uncorrected figure is the one that
+gets read. On the shipped sample book:
+
+```
+VWAP cost over 59 filled order(s): +8.91 bps against the bars as recorded
+and +11.67 against a benchmark these orders had no part in setting. Exchange volume
+includes their own prints, so order by order the first is (1 - p) times the second, with
+p the share of volume taken: a median of 9.7% and a mean of 14.4%.
+The book moves by a factor of 0.76 rather than 0.86, because the orders
+that took the most volume are the ones that cost the most.
+```
+
+That last line is there because the first draft stopped before it and invited
+arithmetic that does not hold. Participation and cost correlate at 0.54 on this
+book, so the average moves further than either rate implies, and a reader left
+to multiply the mean rate by the honest figure would get the wrong number.
+
+**What the correction assumes, since only half of it is certain.** The volume a
+bar records does include the order's shares, so subtracting them from the
+denominator is right. The notional does not exist in OHLCV data and is
+estimated here from the bar's typical price, so the numerator's correction is as
+good as that estimate and no better. The identity above then holds exactly as
+arithmetic — it is the definition rearranged — and the size of what it corrects
+is a fact about the data.
+
+**It also has to use the benchmark's own window, which is not the one the
+participation rate uses.** `participation_rate` starts at the bar containing
+arrival, deliberately, so the volume the order traded against in its first
+minutes is not dropped; `order_window` starts at arrival. With a mid-bar
+arrival the two rates differ — 0.200 against 0.278 on the fixture in the tests
+— and only the second satisfies the decomposition. Which window a VWAP
+benchmark *should* use is a separate question and a convention: changing it
+would move every existing VWAP number in the library, so the discrepancy is
+reported rather than quietly resolved. Every order in the synthetic book
+arrives on a bar boundary, which is why it never showed.
 
 ## Implementation shortfall
 

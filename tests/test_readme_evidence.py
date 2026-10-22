@@ -43,6 +43,7 @@ ROWS = (
     "The same grid's objective against the continuum's",
     "The response kernel at zero urgency, against a tent",
     "Implementation shortfall against the same sum done by hand",
+    "The ex-own VWAP against a book whose other prints are known, 200 books",
 )
 
 #: The bound each row enforces. Pinned here as well as read off the script, so
@@ -54,6 +55,7 @@ BOUNDS = {
     "The same grid's objective against the continuum's": 0.0,
     "The response kernel at zero urgency, against a tent": 1e-14,
     "Implementation shortfall against the same sum done by hand": 0.0,
+    "The ex-own VWAP against a book whose other prints are known, 200 books": 1e-12,
 }
 
 

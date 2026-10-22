@@ -3,16 +3,19 @@ from __future__ import annotations
 import json
 import math
 import warnings
+from datetime import timedelta
 
 import numpy as np
 import pytest
+from conftest import make_bar, minute
 
 from slippage.calibration import fit_power_law
 from slippage.exceptions import IdentifiabilityWarning, ValidationError
 from slippage.impact import SquareRootLaw
 from slippage.report import build_report, compare_to_model, modified_z_scores
+from slippage.series import BarSeries
 from slippage.synthetic import SyntheticBook, synthetic_book
-from slippage.types import Fill, Order
+from slippage.types import Fill, Order, Side
 
 
 @pytest.fixture(scope="module")
@@ -172,3 +175,127 @@ def test_unfilled_orders_are_reported_without_vwap() -> None:
     assert row.vwap_bps is None
     assert row.participation == 0.0
     assert row.shortfall.trading == 0.0
+
+
+class TestVwapContamination:
+    """The corrected VWAP cost, and the rate that explains the gap.
+
+    The report has printed a participation rate and a VWAP cost in adjacent
+    columns since it was written. These are the tests that the two are now
+    connected, and that the connection is the right one.
+    """
+
+    def test_the_report_carries_both_figures_and_the_benchmark_window_rate(
+        self, book: SyntheticBook
+    ) -> None:
+        report = build_report(book.orders, book.bars)
+        for row in report.orders:
+            if row.vwap_ex_own_bps is None:
+                assert row.benchmark_participation is None
+                continue
+            assert row.benchmark_participation is not None
+            assert row.vwap_bps is not None
+            assert 0.0 < row.benchmark_participation < 1.0
+            ratio = row.vwap_bps / row.vwap_ex_own_bps
+            assert ratio == pytest.approx(1.0 - row.benchmark_participation, abs=5e-3)
+
+    def test_the_uncorrected_figure_is_always_the_smaller_in_magnitude(
+        self, book: SyntheticBook
+    ) -> None:
+        """Because ``(1 - p)`` is below one, whichever way the cost went."""
+        report = build_report(book.orders, book.bars)
+        pairs = [
+            (row.vwap_bps, row.vwap_ex_own_bps)
+            for row in report.orders
+            if row.vwap_bps is not None and row.vwap_ex_own_bps is not None
+        ]
+        assert pairs
+        for reported, honest in pairs:
+            assert abs(reported) <= abs(honest) + 1e-12
+
+    def test_the_synthetic_book_hides_the_window_difference(self, book: SyntheticBook) -> None:
+        """Every order here arrives on a bar boundary, so the two rates coincide.
+
+        Asserted rather than assumed, because it is the reason the discrepancy
+        was never visible: the generated book cannot show it, and the next test
+        has to construct a mid-bar arrival to make it appear. A suite that only
+        ran against this fixture would conclude the two fields are one quantity.
+        """
+        report = build_report(book.orders, book.bars)
+        rows = [row for row in report.orders if row.benchmark_participation is not None]
+        assert rows
+        for row in rows:
+            assert row.benchmark_participation == pytest.approx(row.participation, abs=1e-9)
+
+    def test_a_mid_bar_arrival_separates_the_two_rates(self) -> None:
+        """And it is the benchmark-window rate that the VWAP figures obey.
+
+        ``participation_rate`` starts at the bar containing arrival, by a
+        deliberate choice; the benchmark's window starts at arrival. Thirty
+        seconds into the first bar is enough to put them well apart, and the
+        ratio of the two costs follows the second.
+        """
+        series = BarSeries(
+            [
+                make_bar(n, price, spread=0.0, volume=volume)
+                for n, (price, volume) in enumerate(
+                    zip([100.00, 100.10, 100.20], [1200.0, 1200.0, 1000.0], strict=True)
+                )
+            ]
+        )
+        order = Order(
+            symbol="ACME",
+            side=Side.BUY,
+            quantity=400.0,
+            decision_time=minute(0),
+            arrival_time=minute(0) + timedelta(seconds=30),
+            fills=(
+                Fill(timestamp=minute(1) + timedelta(seconds=15), quantity=400.0, price=100.20),
+            ),
+            decision_price=100.0,
+        )
+        row = build_report({"MID": order}, {"ACME": series}).orders[0]
+        assert row.benchmark_participation is not None
+        assert row.vwap_bps is not None
+        assert row.vwap_ex_own_bps is not None
+        assert abs(row.benchmark_participation - row.participation) > 0.05
+        assert row.benchmark_participation > row.participation
+        assert row.vwap_bps / row.vwap_ex_own_bps == pytest.approx(
+            1.0 - row.benchmark_participation, abs=5e-3
+        )
+
+    def test_both_figures_reach_the_json(self, book: SyntheticBook) -> None:
+        payload = build_report(book.orders, book.bars).to_dict()
+        rows = payload["orders"]
+        assert isinstance(rows, list)
+        first = rows[0]
+        assert isinstance(first, dict)
+        assert "vwap_ex_own_bps" in first
+        assert "benchmark_participation" in first
+
+    def test_an_order_that_was_the_whole_market_keeps_its_uncorrected_figure(self) -> None:
+        """The correction is dropped on its own, not taking the other figure with it.
+
+        That order's VWAP cost is zero by construction rather than missing, and
+        reporting it as zero beside an absent correction is the honest pair.
+        """
+        series = BarSeries(
+            [
+                make_bar(0, 100.00, spread=0.0, volume=500.0),
+                make_bar(1, 100.00, spread=0.0, volume=0.0),
+            ]
+        )
+        order = Order(
+            symbol="ACME",
+            side=Side.BUY,
+            quantity=500.0,
+            decision_time=minute(0),
+            arrival_time=minute(0),
+            fills=(Fill(timestamp=minute(0) + timedelta(seconds=5), quantity=500.0, price=100.0),),
+            decision_price=100.0,
+        )
+        report = build_report({"ONE": order}, {"ACME": series})
+        row = report.orders[0]
+        assert row.vwap_bps == 0.0
+        assert row.vwap_ex_own_bps is None
+        assert row.benchmark_participation is None
