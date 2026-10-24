@@ -102,11 +102,45 @@ from .exceptions import ValidationError
 from .execution import ExecutionProblem, linear_trajectory, optimal_trajectory
 from .impact import LinearImpact
 
-#: Most intervals any problem built here is given. A capacity search walks the
+#: Intervals a problem is given for accuracy alone. A capacity search walks the
 #: horizon over orders of magnitude and the cost of a trajectory is linear in
 #: the interval count, so an uncapped count makes a search quadratic in the
-#: horizon for no accuracy worth having.
+#: horizon for no accuracy worth having. This is a floor on the resolution
+#: rather than a ceiling on it: :data:`MAX_INTERVAL_FRACTION` raises the count
+#: above it whenever the horizon is long enough to need that.
 MAX_PERIODS = 2000
+
+#: Largest share of the admissible interval length that one interval may take.
+#:
+#: The discrete problem is admissible only while ``eta_tilde = eta - gamma tau
+#: / 2`` is positive, which bounds ``tau`` by ``2 eta / gamma``. Capping the
+#: interval *count* leaves the interval *length* growing with the horizon, so a
+#: long enough horizon walks out of the model's domain and the discretisation
+#: ends up deciding admissibility -- a performance knob answering a question
+#: about the market.
+#:
+#: The fraction is chosen by measurement rather than taste. ``half_lives`` is
+#: ``sqrt(3)`` for the uniform schedule in the continuum and ``kappa`` is solved
+#: against ``eta_tilde``, so that identity is the sharpest available reading of
+#: how far the discretisation has moved the model. Swept over risk aversions
+#: from 1e-6 to 1e-13, the worst relative error in it is 2.02% at a fraction of
+#: 0.05, 0.86% at 0.02 and 0.50% at 0.01 -- close to a straight ``45 f``,
+#: because an interval count is an integer, so the solver's own search varies
+#: the interval length in proportion to the horizon and ``eta_tilde`` with it.
+#: Break-even capacity is far less sensitive -- 3.8 basis points at 0.5 -- so it
+#: is the identity that sets this.
+#:
+#: The worst case always sits at the crossover, where the horizon is just long
+#: enough for this bound to start raising the count above :data:`MAX_PERIODS`.
+#: That is the point of quoting a worst case rather than a sample: the error at
+#: any one risk aversion is smaller and says nothing about the next one.
+MAX_INTERVAL_FRACTION = 0.01
+
+#: Hard ceiling on the interval count, past which the discretisation is refused
+#: rather than attempted. Reached only when the horizon is enormous next to
+#: ``eta / gamma``, which is a fact about the problem rather than about this
+#: module, so the refusal says which.
+INTERVAL_LIMIT = 2_000_000
 
 #: Default ceiling on the search, in units of one period's volume. Beyond fifty
 #: days of volume the linear impact model is not describing anything, so a
@@ -185,12 +219,46 @@ class Mandate:
                 "a capacity."
             )
 
+    @property
+    def longest_interval(self) -> float:
+        """Longest interval this mandate's impact model may be discretised into.
+
+        :data:`MAX_INTERVAL_FRACTION` of ``2 eta / gamma``, which is where the
+        discrete problem stops being admissible. Infinite with no permanent
+        impact, since there is then nothing for the temporary impact to lose to
+        within an interval and any interval length is as good as another.
+        """
+        if self.impact.gamma <= 0.0:
+            return math.inf
+        return MAX_INTERVAL_FRACTION * 2.0 * self.impact.eta / self.impact.gamma
+
     def periods_for(self, horizon: float) -> int:
-        """Intervals to split ``horizon`` into, capped at :data:`MAX_PERIODS`."""
+        """Intervals to split ``horizon`` into.
+
+        At least :data:`MAX_PERIODS` worth of resolution, or the whole horizon
+        at ``periods_per_unit_time`` where that is coarser, and then as many
+        more as it takes to keep every interval inside
+        :attr:`longest_interval`. The second condition is what makes the count
+        rise with the horizon: without it the interval length rises instead,
+        and past ``2 eta / gamma`` the problem is no longer admissible at all.
+        """
         if not math.isfinite(horizon) or horizon <= 0.0:
             raise ValidationError(f"horizon must be positive, got {horizon!r}")
-        wanted = math.ceil(horizon * self.periods_per_unit_time)
-        return max(2, min(MAX_PERIODS, wanted))
+        wanted = max(2, min(MAX_PERIODS, math.ceil(horizon * self.periods_per_unit_time)))
+        longest = self.longest_interval
+        if math.isinf(longest):
+            return wanted
+        needed = math.ceil(horizon / longest)
+        if needed > INTERVAL_LIMIT:
+            raise ValidationError(
+                f"a horizon of {horizon:g} would need {needed:,} intervals to keep each "
+                f"one under {longest:g}, past the {INTERVAL_LIMIT:,} this builds. The "
+                f"interval length is bounded by the impact model: eta / gamma is "
+                f"{self.impact.eta / self.impact.gamma:g}, and a horizon this long "
+                "beside it is not something the discrete model can describe. Shorten "
+                "the horizon, or restate the impact model in a longer time unit."
+            )
+        return max(wanted, needed)
 
     def problem(self, quantity: float, horizon: float) -> ExecutionProblem:
         """The execution problem this mandate poses at a size and a horizon."""

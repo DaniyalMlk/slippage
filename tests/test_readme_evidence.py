@@ -44,6 +44,7 @@ ROWS = (
     "The response kernel at zero urgency, against a tent",
     "Implementation shortfall against the same sum done by hand",
     "The ex-own VWAP against a book whose other prints are known, 200 books",
+    ("The uniform schedule's best horizon against the Almgren-Chriss half-life, 7 risk aversions"),
 )
 
 #: The bound each row enforces. Pinned here as well as read off the script, so
@@ -56,6 +57,9 @@ BOUNDS = {
     "The response kernel at zero urgency, against a tent": 1e-14,
     "Implementation shortfall against the same sum done by hand": 0.0,
     "The ex-own VWAP against a book whose other prints are known, 200 books": 1e-12,
+    (
+        "The uniform schedule's best horizon against the Almgren-Chriss half-life, 7 risk aversions"
+    ): 6e-3,
 }
 
 

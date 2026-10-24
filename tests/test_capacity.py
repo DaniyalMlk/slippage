@@ -38,6 +38,7 @@ import pytest
 from slippage.capacity import (
     BISECTION_STEPS,
     DEFAULT_CEILING_IN_VOLUME,
+    MAX_INTERVAL_FRACTION,
     MAX_PERIODS,
     Capacity,
     Horizon,
@@ -383,14 +384,18 @@ def test_a_risk_neutral_mandate_has_no_optimal_horizon() -> None:
         assert cheaper < dearer
     permanent = 0.5 * IMPACT.gamma * 1e6 * 1e6 + IMPACT.epsilon * 1e6
     # It does not reach the permanent impact, and the residual is not slack in
-    # the limit: at a thousand units of time the interval count is on its cap,
-    # so tau is half a unit and the temporary term eta_tilde X^2 / T is still
-    # 95 of the 15,095. Asserted as that expression rather than as a tolerance,
-    # since a tolerance would hide which of the two it was.
-    tau = 1000.0 / MAX_PERIODS
+    # the limit: at a thousand units of time the interval bound is what sets the
+    # count, so tau is a tenth of a unit and the temporary term eta_tilde X^2 /
+    # T is still 99 of the 15,099. Asserted as that expression rather than as a
+    # tolerance, since a tolerance would hide which of the two it was, and the
+    # count is read off the mandate so that it says which rule is binding.
+    periods = BASE.periods_for(1000.0)
+    assert periods > MAX_PERIODS
+    assert periods == math.ceil(1000.0 / BASE.longest_interval)
+    tau = 1000.0 / periods
     eta_tilde = IMPACT.eta - 0.5 * IMPACT.gamma * tau
     assert costs[-1] == pytest.approx(permanent + eta_tilde * 1e12 / 1000.0, rel=1e-9)
-    assert costs[-1] - permanent == pytest.approx(95.0, abs=0.5)
+    assert costs[-1] - permanent == pytest.approx(99.0, abs=0.5)
 
 
 def test_the_optimal_schedule_declines_the_extra_time() -> None:
@@ -501,10 +506,19 @@ def test_an_elasticity_refuses_a_fixed_cost_that_swallows_the_whole_cost() -> No
         cost_elasticity(curve, 1.0)
 
 
-def test_the_interval_count_is_capped_and_at_least_two() -> None:
+def test_the_interval_count_is_at_least_two_and_follows_the_granularity() -> None:
     assert BASE.periods_for(1e-9) == 2
     assert BASE.periods_for(1.0) == 390
-    assert BASE.periods_for(1e9) == MAX_PERIODS
+
+
+def test_the_declared_granularity_stops_raising_the_count_at_the_cap() -> None:
+    at_cap = MAX_PERIODS / BASE.periods_per_unit_time
+    assert BASE.periods_for(at_cap) == MAX_PERIODS
+    # Ten times that horizon asks for ten times the count at the declared
+    # granularity, and gets the cap. Past here the resolution is the interval
+    # bound's business rather than the count's.
+    assert math.ceil(10.0 * at_cap * BASE.periods_per_unit_time) == 10 * MAX_PERIODS
+    assert BASE.periods_for(10.0 * at_cap) == MAX_PERIODS
 
 
 def test_everything_returned_is_finite() -> None:
@@ -535,3 +549,134 @@ def test_the_figures_printed_in_the_readme() -> None:
     assert f"{break_even_at_participation(BASE, 0.05).quantity:,.0f}" == "2,001,001"
     assert f"{alpha_floor(BASE, 0.10):.6f}" == "0.055000"
     assert f"{alpha_floor(BASE, 0.25):.6f}" == "0.130000"
+
+
+# The interval length, and what used to happen when only the count was bounded.
+#
+# The discrete problem is admissible while eta_tilde = eta - gamma tau / 2 is
+# positive, so tau is bounded by 2 eta / gamma whatever the horizon is. These
+# assert that the bound binds, that it binds with room to spare, and that the
+# two things it used to break -- a patient participation rate, and the sqrt(3)
+# half-life identity -- now hold.
+
+
+def old_periods_for(self: Mandate, horizon: float) -> int:
+    """What `periods_for` did when the count alone was bounded."""
+    if not math.isfinite(horizon) or horizon <= 0.0:
+        raise ValidationError(f"horizon must be positive, got {horizon!r}")
+    return max(2, min(MAX_PERIODS, math.ceil(horizon * self.periods_per_unit_time)))
+
+
+RISK_AVERSIONS = (1e-6, 1e-8, 1e-9, 1e-10, 1e-11, 1e-12, 1e-13)
+
+
+def test_the_admissible_interval_length_is_two_eta_over_gamma() -> None:
+    assert BASE.longest_interval == MAX_INTERVAL_FRACTION * 2.0 * IMPACT.eta / IMPACT.gamma
+    assert BASE.longest_interval < 2.0 * IMPACT.eta / IMPACT.gamma
+
+
+def test_nothing_is_discretised_past_the_bound() -> None:
+    """Horizons chosen so that the bound does not divide them.
+
+    A round horizon divides the interval bound exactly, and then rounding the
+    count up and rounding it down give the same answer -- so a sweep of round
+    horizons cannot see a count that is one interval short. The assertion
+    below keeps that from quietly becoming true again.
+    """
+    horizons = (1e-6, 1.0, 10.0, 1234.56, 9999.99, 4.937e4)
+    assert any(horizon % BASE.longest_interval != 0.0 for horizon in horizons)
+    for horizon in horizons:
+        tau = horizon / BASE.periods_for(horizon)
+        assert tau <= BASE.longest_interval
+        # And with margin: eta_tilde is within the fraction of eta itself.
+        eta_tilde = IMPACT.eta - 0.5 * IMPACT.gamma * tau
+        assert eta_tilde >= IMPACT.eta * (1.0 - MAX_INTERVAL_FRACTION)
+
+
+def test_the_old_rule_left_the_interval_length_growing_with_the_horizon() -> None:
+    """The failure the bound exists to stop, shown rather than asserted about."""
+    lengths = [1e3 / old_periods_for(BASE, 1e3), 5e4 / old_periods_for(BASE, 5e4)]
+    assert lengths[1] / lengths[0] == pytest.approx(50.0, rel=1e-12)
+    assert lengths[1] > 2.0 * IMPACT.eta / IMPACT.gamma
+
+
+def test_no_permanent_impact_leaves_the_interval_length_free() -> None:
+    free = mandate(impact=LinearImpact(gamma=0.0, eta=1e-7, epsilon=0.005))
+    assert free.longest_interval == math.inf
+    assert free.periods_for(1e9) == MAX_PERIODS
+
+
+def test_a_horizon_past_what_can_be_discretised_is_refused_by_name() -> None:
+    with pytest.raises(ValidationError, match="eta / gamma") as raised:
+        BASE.periods_for(1e9)
+    assert "intervals" in str(raised.value)
+    # Not the admissibility error, which is the one this used to produce and
+    # which offered advice the caller could not take.
+    assert "Use more periods" not in str(raised.value)
+
+
+def test_a_patient_participation_rate_returns_instead_of_refusing() -> None:
+    """Every one of these raised before the interval length was bounded.
+
+    The reference is not a tolerance but the discretisation's own term: the
+    discrete break-even sits above the continuum one by ``1 / (N - 1)``, the
+    ``1 - 1/N`` the permanent impact carries, and by nothing else. That is why
+    the gap shrinks as the rate falls -- a patient rate is a long horizon, and
+    the interval bound answers a long horizon with more intervals.
+    """
+    gaps = []
+    for rate in (0.005, 0.003, 0.002, 0.001):
+        found = break_even_at_participation(BASE, rate)
+        continuum = break_even_continuum(BASE, participation=rate)
+        periods = BASE.periods_for(found.horizon)
+        gap = found.quantity / continuum - 1.0
+        assert gap == pytest.approx(1.0 / (periods - 1), rel=1e-3, abs=0.0)
+        assert found.horizon == pytest.approx(found.quantity / (rate * VOLUME), rel=1e-12)
+        gaps.append(gap)
+    for wider, narrower in pairwise(gaps):
+        assert narrower < wider
+
+
+def test_the_old_rule_refused_those_rates() -> None:
+    saved = Mandate.periods_for
+    Mandate.periods_for = old_periods_for  # type: ignore[method-assign]
+    try:
+        with pytest.raises(ValidationError, match="is not positive"):
+            break_even_at_participation(BASE, 0.002)
+    finally:
+        Mandate.periods_for = saved  # type: ignore[method-assign]
+
+
+def test_a_capacity_curve_at_a_patient_rate_is_monotone() -> None:
+    points = capacity_curve(BASE, [1e6, 1e7, 1e8], participation=0.001)
+    assert len(points) == 3
+    for cheaper, dearer in pairwise(points):
+        assert dearer.cost_per_share > cheaper.cost_per_share
+
+
+def test_the_half_life_identity_holds_across_risk_aversions() -> None:
+    """`half_lives` is sqrt(3) in the continuum; the discretisation moves it.
+
+    The bound is 0.6%, chosen because the measured worst case over this sweep
+    is 0.50% and sits at the crossover, where the horizon is just long enough
+    for the interval bound to start raising the count. Both halves are
+    asserted: nothing exceeds the bound, and something comes within a factor of
+    two of it, so a bound that had quietly stopped being able to fail would
+    show up here as the second assertion rather than as silence.
+    """
+    errors = []
+    for risk_aversion in RISK_AVERSIONS:
+        found = uniform_optimal_horizon(mandate(risk_aversion=risk_aversion), 1e6)
+        errors.append(abs(found.half_lives / math.sqrt(3.0) - 1.0))
+    assert max(errors) < 6e-3
+    assert max(errors) > 3e-3
+
+
+def test_the_old_rule_put_the_half_life_identity_out_by_eighteen_per_cent() -> None:
+    saved = Mandate.periods_for
+    Mandate.periods_for = old_periods_for  # type: ignore[method-assign]
+    try:
+        found = uniform_optimal_horizon(mandate(risk_aversion=1e-13), 1e6)
+    finally:
+        Mandate.periods_for = saved  # type: ignore[method-assign]
+    assert found.half_lives / math.sqrt(3.0) - 1.0 == pytest.approx(0.186, abs=5e-3)
