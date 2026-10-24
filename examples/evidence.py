@@ -31,6 +31,7 @@ outside the band the README states.
 from __future__ import annotations
 
 import itertools
+import math
 import random
 import runpy
 import sys
@@ -418,6 +419,74 @@ def ex_own_vwap_against_a_known_counterparty() -> tuple[Check, float, float]:
     )
 
 
+def half_life_identity_across_risk_aversions() -> tuple[Check, float, float]:
+    """The uniform schedule's best horizon against the Almgren-Chriss half-life.
+
+    For a uniform schedule every term carrying ``T`` carries the same ``X^2``,
+    so the optimum is ``sqrt(3 eta_tilde / (lambda sigma^2))`` and the
+    Almgren-Chriss urgency is ``kappa = sqrt(lambda sigma^2 / eta_tilde)`` over
+    the same ratio: their product is ``sqrt(3)`` exactly, in the continuum.
+
+    The reference is another module's. The horizon comes from
+    ``capacity.uniform_optimal_horizon``, which locates it by a golden-section
+    search on the discrete objective and knows nothing about the closed form;
+    ``kappa`` comes from ``execution.ExecutionProblem``, which solves it
+    against ``eta_tilde``. Neither can produce ``sqrt(3)`` on its own, and
+    nothing in either path contains the number.
+
+    What the gap measures is the discretisation. An interval count is an
+    integer, so between one count and the next the search varies the interval
+    length in proportion to the horizon, and ``eta_tilde`` with it. That is why
+    the bound is bounded by the interval length rather than by the search: it
+    tracks ``MAX_INTERVAL_FRACTION`` almost linearly, and the worst case sits
+    where the horizon is just long enough for that bound to start raising the
+    count.
+
+    Returns the worst relative error and the risk aversion and horizon it
+    occurred at.
+    """
+    mandate = sl.Mandate(
+        alpha=0.05,
+        volume=5e6,
+        volatility=0.30,
+        impact=sl.LinearImpact(gamma=2e-8, eta=1e-7, epsilon=0.005),
+    )
+    worst = 0.0
+    at_risk_aversion = 0.0
+    at_horizon = 0.0
+    for exponent in (-6, -8, -9, -10, -11, -12, -13):
+        risk_aversion = 10.0**exponent
+        found = sl.uniform_optimal_horizon(
+            sl.Mandate(
+                alpha=mandate.alpha,
+                volume=mandate.volume,
+                volatility=mandate.volatility,
+                impact=mandate.impact,
+                risk_aversion=risk_aversion,
+            ),
+            1e6,
+        )
+        error = abs(found.half_lives / math.sqrt(3.0) - 1.0)
+        if error > worst:
+            worst, at_risk_aversion, at_horizon = error, risk_aversion, found.horizon
+    return (
+        Check(
+            label=(
+                "The uniform schedule's best horizon against the Almgren-Chriss "
+                "half-life, 7 risk aversions"
+            ),
+            measured=worst,
+            bound=6e-3,
+            rendered=(
+                f"their product is sqrt(3) to within {worst:.2%}, worst at a risk "
+                f"aversion of {at_risk_aversion:.0e}"
+            ),
+        ),
+        at_risk_aversion,
+        at_horizon,
+    )
+
+
 def main() -> dict[str, object]:
     """Run every check, print the table, and return the figures."""
     schedule, cases, schedules = schedule_against_enumeration()
@@ -425,6 +494,7 @@ def main() -> dict[str, object]:
     trades, objective, grid_value, continuum_value = grid_against_the_closed_form()
     kernel, flat, urgent = kernel_shape()
     ex_own, least_factor, most_factor = ex_own_vwap_against_a_known_counterparty()
+    half_life, worst_risk_aversion, worst_horizon = half_life_identity_across_risk_aversions()
     checks = [
         schedule,
         routing,
@@ -433,6 +503,7 @@ def main() -> dict[str, object]:
         kernel,
         shortfall_against_arithmetic_by_hand(),
         ex_own,
+        half_life,
     ]
 
     print("What is checked, and against what")
@@ -478,6 +549,7 @@ def main() -> dict[str, object]:
         "continuum_objective": continuum_value,
         "curvature": (flat, urgent),
         "ex_own_factors": (least_factor, most_factor),
+        "half_life_worst_at": (worst_risk_aversion, worst_horizon),
     }
 
 

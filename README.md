@@ -34,6 +34,7 @@ runs in CI and exits non-zero if any of them moves:
 | The response kernel at zero urgency, against a tent | curvature 1e-14 of its peak away from the spike; 2e-02 at an urgency of 1e-6, so the shape is a result |
 | Implementation shortfall against the same sum done by hand | identical on every component, to the cent |
 | The ex-own VWAP against a book whose other prints are known, 200 books | recovers their VWAP to 1e-12 relative, where the uncorrected benchmark understates by 8% to 52% |
+| The uniform schedule's best horizon against the Almgren-Chriss half-life, 7 risk aversions | their product is sqrt(3) to within 0.50%, worst at a risk aversion of 1e-10 |
 
 **Why enumeration comes first.** A solver checked against a closed form is
 checked against a rearrangement of the same mathematics, and a sign error made
@@ -44,7 +45,17 @@ enough to enumerate and large enough that the optimum is not obvious; the
 capped cases matter most, because an unconstrained problem is one a closed form
 could have answered anyway.
 
-**The last row's reference is a construction, not a formula.** Two hundred
+**The last row's reference belongs to another module.** The horizon comes from
+`capacity`, which finds it by a golden-section search on the discrete objective
+and never writes `sqrt(3)` down; the half-life comes from `execution`, which
+solves `kappa` against `eta_tilde`. Neither can produce the identity alone, and
+what is left of it is the discretisation: an interval count is an integer, so
+between one count and the next the search varies the interval length in
+proportion to the horizon. The worst case sits where the horizon is just long
+enough for the interval bound to start raising the count, which is why the row
+quotes a worst case over a sweep rather than a figure at one risk aversion.
+
+**The ex-own VWAP row's reference is a construction, not a formula.** Two hundred
 books are built from explicit prints — a set the order did and a set it did
 not, each with its own quantity and price — so the other traders' VWAP is known
 before the library is asked: it is the volume-weighted average of the prints
@@ -1434,16 +1445,18 @@ at all?**
 
 ```console
 $ slippage capacity --alpha 0.05 --volume 5e6 --volatility 0.30 \
-    --gamma 2e-8 --eta 1e-7 --epsilon 0.005
+    --gamma 2e-8 --eta 1e-7 --epsilon 0.005 \
+    --participations 0.02,0.05,0.002,0.10,0.25
 alpha 0.050000 per share, volume 5,000,000 per period
 at a fixed horizon of 1: 409,186 shares = 0.082 periods of volume, costing 0.050000
   the continuum formula says 409,091, which is -0.000233 of it: the 1 - 1/N on the permanent term
 
     rate   alpha floor        capacity    periods    horizon
-   2.0%      0.015000       3,501,751       0.70      35.02
-   5.0%      0.030000       2,001,001       0.40       8.00
-  10.0%      0.055000            none          -          -
-  25.0%      0.130000            none          -          -
+      2%      0.015000       3,501,751       0.70      35.02
+      5%      0.030000       2,001,001       0.40       8.00
+    0.2%      0.006000       4,401,000       0.88     440.10
+     10%      0.055000            none          -          -
+     25%      0.130000            none          -          -
 ```
 
 ### The two conventions disagree about what limits capacity
@@ -1486,7 +1499,28 @@ wrong variable.
 
 That optimum is `sqrt(3)` times the Almgren-Chriss half-life, since
 `kappa = sqrt(lambda sigma^2 / eta_tilde)` over the same ratio — measured at
-1.7352, 1.7335, 1.7330 and 1.7322 half-lives against `sqrt(3) = 1.7321`.
+1.7322, 1.7335, 1.7352, 1.7407, 1.7325, 1.7324 and 1.7322 half-lives over risk
+aversions from 1e-6 to 1e-13, against `sqrt(3) = 1.7321`.
+
+### What bounds the discretisation is the interval length, not the count
+
+`eta_tilde = eta - gamma tau / 2` has to stay positive for the discrete problem
+to exist at all, so the interval length `tau` is bounded by `2 eta / gamma`
+whatever the horizon is. Capping the interval *count* instead leaves `tau`
+growing with the horizon, and a patient participation rate is a long horizon: at
+these parameters `tau` is admissible only below 10, and the ceiling the search
+probes at a fifth of a percent participation puts it at 12.5. So the count rises
+with the horizon when it has to — 2,000 intervals for a horizon of five, 4,401
+for one of 440, 57,452 for one of 5,745 — and a horizon that would need more than
+two million of them is refused by name rather than attempted.
+
+The fraction of `2 eta / gamma` one interval may take is set by measurement, and
+the `sqrt(3)` identity is what measures it: its worst relative error over the
+sweep above is 2.02% at a fraction of 0.05, 0.86% at 0.02 and 0.50% at 0.01,
+close to a straight `45 f`. Break-even capacity is far less sensitive — 3.8 basis
+points at a fraction of 0.5 — so the identity is what sets the bound, which is a
+case of the loosest-looking claim in a module being the one with the sharpest
+instrument behind it.
 
 ### And the optimal schedule has no optimal horizon
 

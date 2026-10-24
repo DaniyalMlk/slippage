@@ -1043,3 +1043,59 @@ bar boundary, so the two rates coincide there. The suite asserts that they do,
 because it is the reason the discrepancy was never visible, and a suite that
 only ran against the generated fixture would have concluded the two fields were
 one quantity.
+
+## Phase 24 — The interval length, not the interval count
+
+`Mandate.periods_for` capped the interval count at `MAX_PERIODS` however long
+the horizon was, so the interval length `tau = horizon / periods` grew with the
+horizon. The discrete Almgren-Chriss problem is admissible only while
+`eta_tilde = eta - gamma tau / 2` is positive, so past `tau = 2 eta / gamma` a
+performance knob was deciding a question about the market: on the module's own
+test mandate every participation rate at or below 0.2% was refused, which is the
+ordinary case for a large order, and the refusal advised using more periods,
+which no caller could do because the cap was the thing in the way.
+
+- [x] `Mandate.longest_interval`, so the bound is a property of the impact model
+      rather than a number buried in a search
+- [x] The count raised with the horizon whenever it has to be, and the declared
+      granularity still honoured below the cap
+- [x] `MAX_INTERVAL_FRACTION` chosen by measurement: the `sqrt(3)` half-life
+      identity is the instrument, and its worst relative error over seven risk
+      aversions is 2.02% at a fraction of 0.05, 0.86% at 0.02 and 0.50% at 0.01
+- [x] The worst case located rather than sampled — it sits at the crossover,
+      where the horizon is just long enough for the bound to start raising the
+      count, and the error at any one risk aversion says nothing about the next
+- [x] A horizon past what can be discretised affordably refused by name, saying
+      that `eta / gamma` is the obstruction, instead of raising the
+      admissibility error with advice the caller cannot take
+- [x] The break-even test's reference the discretisation's own term rather than
+      a tolerance: the discrete answer sits above the continuum one by
+      `1 / (N - 1)`, which is also why the gap narrows as the rate falls
+- [x] One unanswerable rate no longer taking `slippage capacity` down with it,
+      with the reason carried in the table and in the JSON
+- [x] The rate column printed to four significant figures, since one decimal
+      place read 0.1% and 0.05% as the same rate and patient rates are exactly
+      the ones that now have answers
+- [x] An evidence row whose reference is another module: the horizon from
+      `capacity`'s golden-section search against `execution`'s `kappa`, neither
+      of which can produce `sqrt(3)` alone
+- [x] Five ways of breaking the bound confirmed to fail first, and three ways of
+      breaking the evidence row
+
+What the measuring turned up. The identity's error tracks the interval length
+almost linearly — close to `45 f` — and not the interval count, which is the
+reason a cap on the count could not control it. An interval count is an integer,
+so between one count and the next the solver's own search varies the length in
+proportion to the horizon and `eta_tilde` with it; making the count larger
+without making it rise with the horizon moves the error but does not remove it.
+
+The first sweep of horizons written to check the bound could not fail. Every
+horizon in it was a round multiple of the bound, so rounding the count down
+instead of up gave the same count, and the test passed against a deliberately
+broken version. The sweep now uses horizons the bound does not divide and
+asserts that at least one of them does not.
+
+Break-even capacity, meanwhile, barely notices any of this: 3.8 basis points
+over a tenfold change in the bound. The loosest-looking claim in the module had
+the sharpest instrument behind it, and the number a reader cares about had
+almost none.
