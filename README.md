@@ -1090,9 +1090,24 @@ Three results matter more than the price.
 
 **The fill probability is twice what the terminal distribution says.** With no
 drift it is `2Φ(-δ/σ√T)`, because every path that ends above the barrier having
-touched it is matched to one that ends below. Measured at four distances the
-ratio is 2.000000. Using the terminal distribution halves the answer quietly,
-since the result still looks like a probability.
+touched it is matched to one that ends below. The ratio is exactly 2 — bit for
+bit, out to eight standard deviations, since dividing a float by half of itself
+is exact and a tolerance there would be covering something up. Using the
+terminal distribution halves the answer quietly, since the result still looks
+like a probability.
+
+The reflected law's upper tail is taken as `Φ(-x)` and not as `1 - Φ(x)`, which
+is a cancellation once the tail is small — and here the tail *is* the answer.
+Against a sixty-digit reference the complement form is 1.5e-10 of the answer
+away at five standard deviations and 7.1% away at eight, while `Φ(-x)` is within
+6e-15 at both. A limit order five standard deviations out is a real order, and
+the identity above only held while the tail was large.
+
+**With a drift it is not twice anything**, and the drift is what makes the
+comparison worth making at all. `terminal_probability` carries it, so the ratio
+is 5.44 at one standard deviation of adverse drift and 1.23 at the same drift
+reversed. A reading that leaves the drift out of that one term is wrong in both
+directions and closest to right exactly where there is nothing to learn.
 
 **Conditional on filling, the expected mid at the horizon is exactly the limit
 price** — `2bΦ(b/s)` over `2Φ(b/s)` is `b`, to twelve digits. So the adverse
@@ -1677,6 +1692,18 @@ dependence the runs can resolve and Abdi-Ranaldo a tenth of the range.
 
 `slippage spread --bars prices.csv` prints all three with their refusal rates;
 `slippage spread --score 0.002` scores them against a spread that is known.
+
+**The score table reports the dispersion and the standard error separately**,
+because `rmse / sqrt(runs)` is not a standard error and it was easiest to
+mistake for one exactly where the difference matters. `rmse` is measured about
+the truth, so `rmse² = bias² + variance` — an exact identity, asserted as an
+equality — and a standard error is made of the second half alone. At a
+spread-to-volatility ratio of 0.05 the two readings differ by a factor of 12.5
+for Corwin-Schultz, the most biased of the three; at a ratio of 1.0, where none
+of them is badly biased, they agree to within a third. The estimator worst
+overstated is the one whose bias is worst, which is the mechanism rather than an
+accident of these parameters, and it matters because the standard error is what
+decides whether a gap between two estimators is real.
 
 ## Layout
 

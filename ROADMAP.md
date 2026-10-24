@@ -1099,3 +1099,58 @@ Break-even capacity, meanwhile, barely notices any of this: 3.8 basis points
 over a tenfold change in the bound. The loosest-looking claim in the module had
 the sharpest instrument behind it, and the number a reader cares about had
 almost none.
+
+## Phase 25 — Figures that were not the quantity their label named
+
+Three published numbers, none of which the library computed wrongly: in each
+case the right quantity was available and a second expression was printed
+beside it.
+
+- [x] `Accuracy.dispersion` and `Accuracy.standard_error`, so the standard error
+      of the mean is made of the sampling half of the rmse rather than of all of
+      it — `rmse^2 = (mean - truth)^2 + population variance`, exactly
+- [x] The identity asserted as an equality rather than a tolerance, in the
+      library's tests and in the CLI's
+- [x] Both halves of the old formula's error, since at a spread-to-volatility
+      ratio of 1.0 the two readings agree to within a third and the biased
+      regime alone would not establish that the old one was wrong rather than
+      merely different
+- [x] The estimator worst overstated asserted to be the one whose bias is worst,
+      which is the mechanism rather than an accident of the parameterisation
+- [x] `Moments.terminal_probability` and `placement.terminal_probability`, so
+      the CLI reads the library's own quantity rather than a driftless formula
+      of its own
+- [x] The exactly-two identity asserted as an equality out to eight standard
+      deviations, since `2x / x` is exact and a tolerance there would be
+      covering something up
+- [x] The reflected law's upper tail taken as `Phi(-x)` rather than `1 - Phi(x)`
+- [x] Both checked against a sixty-digit `Decimal` reference — Taylor below
+      three, continued fraction above — which shares no algebra with the module
+- [x] The complement's error quoted as the size it reaches rather than as a
+      bound, since it grows with the distance
+- [x] Both classes of mistake swept for across the package, and the sweeps'
+      results recorded
+- [x] Five ways of breaking the three fixes confirmed to fail first
+
+What the measuring turned up. The standard error was inflated twelvefold for
+Corwin-Schultz at a spread-to-volatility ratio of 0.05 and by at most a third at
+1.0 — so the error was invisible exactly where the estimators behave and
+largest exactly where the module's argument lives. A reader was told the mean
+was known to within 8.3 basis points when it was known to within 0.8, and the
+standard error is the number that decides whether a difference between two
+estimators is real.
+
+The driftless terminal probability was wrong in *both* directions, which is
+worse than a consistent bias: 1.43 against 5.44 at one standard deviation of
+adverse drift, 2.36 against 1.23 at the same drift reversed. It was closest to
+right at zero drift, where the comparison has nothing to say.
+
+And the thing that came out of looking at it. The module's headline identity —
+the fill probability is exactly twice the terminal one — was exact only while
+the tail was large, because the reflected tail was a complement of a number near
+one. `routing.py` already sums its tails from the top and says why in its module
+docstring; the lesson existed in one module of this package and had not reached
+the other. The sweep for further sites found one more complement,
+`1 - fill_probability`, where the small quantity is a correction to a larger
+term rather than the answer, so the absolute error it carries is the right thing
+to care about and it is left alone.
