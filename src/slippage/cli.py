@@ -2471,7 +2471,8 @@ def _run_spread(args: argparse.Namespace, out: TextIO) -> None:
                     "mean_bps": row.mean * 10000.0,
                     "bias": row.bias,
                     "rmse_bps": row.rmse * 10000.0,
-                    "standard_error_bps": row.rmse / math.sqrt(row.runs) * 10000.0,
+                    "dispersion_bps": row.dispersion * 10000.0,
+                    "standard_error_bps": row.standard_error * 10000.0,
                     "refusal_rate": row.refusal_rate,
                     "unfloored_mean_bps": row.unfloored_mean * 10000.0,
                 }
@@ -2487,8 +2488,17 @@ def _run_spread(args: argparse.Namespace, out: TextIO) -> None:
             f"-- over {args.runs} runs of {args.days} days at {args.ticks} ticks.\n",
             file=out,
         )
-        header = ["estimator", "mean bp", "bias", "rmse bp", "se bp", "refused", "unfloored bp"]
-        widths = [16, 9, 9, 9, 8, 9, 13]
+        header = [
+            "estimator",
+            "mean bp",
+            "bias",
+            "rmse bp",
+            "sd bp",
+            "se bp",
+            "refused",
+            "unfloored bp",
+        ]
+        widths = [16, 9, 9, 9, 9, 8, 9, 13]
         row_text = "  ".join(name.ljust(width) for name, width in zip(header, widths, strict=True))
         print(row_text, file=out)
         print("  ".join("-" * width for width in widths), file=out)
@@ -2498,6 +2508,7 @@ def _run_spread(args: argparse.Namespace, out: TextIO) -> None:
                 f"{row['mean_bps']:.2f}",
                 f"{row['bias'] * 100:+.2f}%",
                 f"{row['rmse_bps']:.2f}",
+                f"{row['dispersion_bps']:.2f}",
                 f"{row['standard_error_bps']:.2f}",
                 f"{row['refusal_rate'] * 100:.1f}%",
                 f"{row['unfloored_mean_bps']:.2f}",
@@ -2517,6 +2528,21 @@ def _run_spread(args: argparse.Namespace, out: TextIO) -> None:
                 "reported spread is the flooring, not an estimate.",
                 file=out,
             )
+        inflation = max(
+            (
+                float(row["rmse_bps"]) / float(row["dispersion_bps"])
+                for row in payload["estimators"]
+                if float(row["dispersion_bps"]) > 0.0
+            ),
+            default=1.0,
+        )
+        print(
+            f"\nThe standard error is the dispersion over the root of the run count, "
+            f"not the rmse: the rmse is measured about the truth and so carries the "
+            f"bias, which here makes it {inflation:.1f}x the dispersion for the worst "
+            f"of the three.",
+            file=out,
+        )
         return
 
     if args.bars is None:

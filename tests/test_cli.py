@@ -1272,9 +1272,20 @@ class TestSpread:
         assert code == 0
         payload = json.loads(text)
         assert payload["truth_bps"] == pytest.approx(200.0)
+        runs = int(payload["runs"])
         for row in payload["estimators"]:
+            # The standard error is the dispersion over the root of the run
+            # count. It used to be the rmse over the same root, which is a
+            # different quantity: the rmse is measured about the truth and so
+            # carries the bias.
             assert row["standard_error_bps"] == pytest.approx(
-                row["rmse_bps"] / math.sqrt(payload["runs"]), rel=1e-9
+                row["dispersion_bps"] / math.sqrt(runs), rel=1e-12, abs=0.0
+            )
+            # rmse^2 = bias^2 + population variance, exactly.
+            absolute_bias = row["mean_bps"] - payload["truth_bps"]
+            population = row["dispersion_bps"] ** 2 * (runs - 1) / runs
+            assert row["rmse_bps"] ** 2 == pytest.approx(
+                absolute_bias**2 + population, rel=1e-12, abs=0.0
             )
         assert json.dumps(payload, allow_nan=False)
 
