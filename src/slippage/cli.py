@@ -77,6 +77,7 @@ from .placement import (
     evaluate,
     monitoring_shift,
     simulate_placement,
+    terminal_probability,
 )
 from .report import COMPONENTS, TcaReport, build_report
 from .reversion import DEFAULT_HORIZONS, reversion_profile
@@ -1987,7 +1988,7 @@ def _run_placement(args: argparse.Namespace, out: TextIO) -> None:
     )
     outcome = evaluate(resting)
     deviation = resting.deviation
-    terminal = 0.5 * math.erfc(resting.standardised_distance / math.sqrt(2.0))
+    terminal = terminal_probability(resting)
 
     swept: list[tuple[float, Outcome]] = []
     if args.sweep:
