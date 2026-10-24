@@ -383,14 +383,18 @@ def test_a_risk_neutral_mandate_has_no_optimal_horizon() -> None:
         assert cheaper < dearer
     permanent = 0.5 * IMPACT.gamma * 1e6 * 1e6 + IMPACT.epsilon * 1e6
     # It does not reach the permanent impact, and the residual is not slack in
-    # the limit: at a thousand units of time the interval count is on its cap,
-    # so tau is half a unit and the temporary term eta_tilde X^2 / T is still
-    # 95 of the 15,095. Asserted as that expression rather than as a tolerance,
-    # since a tolerance would hide which of the two it was.
-    tau = 1000.0 / MAX_PERIODS
+    # the limit: at a thousand units of time the interval bound is what sets the
+    # count, so tau is a tenth of a unit and the temporary term eta_tilde X^2 /
+    # T is still 99 of the 15,099. Asserted as that expression rather than as a
+    # tolerance, since a tolerance would hide which of the two it was, and the
+    # count is read off the mandate so that it says which rule is binding.
+    periods = BASE.periods_for(1000.0)
+    assert periods > MAX_PERIODS
+    assert periods == math.ceil(1000.0 / BASE.longest_interval)
+    tau = 1000.0 / periods
     eta_tilde = IMPACT.eta - 0.5 * IMPACT.gamma * tau
     assert costs[-1] == pytest.approx(permanent + eta_tilde * 1e12 / 1000.0, rel=1e-9)
-    assert costs[-1] - permanent == pytest.approx(95.0, abs=0.5)
+    assert costs[-1] - permanent == pytest.approx(99.0, abs=0.5)
 
 
 def test_the_optimal_schedule_declines_the_extra_time() -> None:
@@ -501,10 +505,19 @@ def test_an_elasticity_refuses_a_fixed_cost_that_swallows_the_whole_cost() -> No
         cost_elasticity(curve, 1.0)
 
 
-def test_the_interval_count_is_capped_and_at_least_two() -> None:
+def test_the_interval_count_is_at_least_two_and_follows_the_granularity() -> None:
     assert BASE.periods_for(1e-9) == 2
     assert BASE.periods_for(1.0) == 390
-    assert BASE.periods_for(1e9) == MAX_PERIODS
+
+
+def test_the_declared_granularity_stops_raising_the_count_at_the_cap() -> None:
+    at_cap = MAX_PERIODS / BASE.periods_per_unit_time
+    assert BASE.periods_for(at_cap) == MAX_PERIODS
+    # Ten times that horizon asks for ten times the count at the declared
+    # granularity, and gets the cap. Past here the resolution is the interval
+    # bound's business rather than the count's.
+    assert math.ceil(10.0 * at_cap * BASE.periods_per_unit_time) == 10 * MAX_PERIODS
+    assert BASE.periods_for(10.0 * at_cap) == MAX_PERIODS
 
 
 def test_everything_returned_is_finite() -> None:
