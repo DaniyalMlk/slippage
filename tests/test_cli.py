@@ -1010,15 +1010,45 @@ def test_capacity_tabulates_both_conventions() -> None:
     assert "alpha floor" in text
     assert "none" in text
     assert "the 1 - 1/N on the permanent term" in text
-    lines = [
-        one
-        for one in text.splitlines()
-        if one.strip().startswith(("2.0%", "5.0%", "10.0%", "25.0%"))
-    ]
+    lines = [one for one in text.splitlines() if one.strip().startswith(("2%", "5%", "10%", "25%"))]
     assert len(lines) == 4
     # The two viable rates carry a capacity and the two above the floor do not.
     assert "none" not in lines[0] and "none" not in lines[1]
     assert "none" in lines[2] and "none" in lines[3]
+
+
+def test_capacity_answers_patient_rates_and_distinguishes_them() -> None:
+    """These rates were refused before the interval length was bounded.
+
+    A tenth of a percent and a twentieth of a percent also used to print as the
+    same rate, which matters now that both have an answer.
+    """
+    code, text = run(*CAPACITY_ARGS, "--participations", "0.02,0.002,0.001,0.0005")
+    assert code == 0
+    heads = [one.strip().split()[0] for one in text.splitlines() if one.strip()]
+    assert [one for one in heads if one.endswith("%")] == ["2%", "0.2%", "0.1%", "0.05%"]
+    assert "none" not in text
+
+
+def test_capacity_keeps_the_rates_it_can_answer_when_one_is_out_of_reach() -> None:
+    """One unanswerable rate used to take the whole command down with it."""
+    code, text = run(*CAPACITY_ARGS, "--participations", "0.02,0.0001,0.5")
+    assert code == 0
+    assert "3,501,751" in text
+    assert "0.01%: a horizon of" in text
+    assert "eta / gamma is 5" in text
+    # The rate above the alpha floor is still reported as a conclusion, and the
+    # unreachable one is not confused with it.
+    assert text.count("none") == 2
+
+
+def test_capacity_json_carries_the_reason_a_rate_has_no_capacity() -> None:
+    code, text = run(*CAPACITY_ARGS, "--participations", "0.02,0.0001,0.5", "--json")
+    assert code == 0
+    rows = {row["participation"]: row for row in json.loads(text)["participation"]}
+    assert rows[0.02]["refused"] is None
+    assert rows[0.5]["refused"] == "unbounded"
+    assert "intervals to keep each one under" in rows[0.0001]["refused"]
 
 
 def test_capacity_emits_json_with_both_conventions_in_it() -> None:

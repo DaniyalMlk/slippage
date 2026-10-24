@@ -2103,6 +2103,26 @@ def _run_placement(args: argparse.Namespace, out: TextIO) -> None:
         )
 
 
+class _RateRow(NamedTuple):
+    """One participation rate, and either its capacity or why it has none."""
+
+    rate: float
+    floor: float
+    found: Capacity | None
+    #: ``None`` when the rate has a capacity, ``"unbounded"`` when the search
+    #: ran off its ceiling, and otherwise the refusal in full.
+    refusal: str | None
+
+
+def _rate_text(rate: float) -> str:
+    """A participation rate as a percentage, without a width that collides.
+
+    One decimal place reads 0.1% and 0.05% as the same rate, and patient rates
+    are exactly the ones this command is now able to answer.
+    """
+    return f"{rate * 100.0:.4g}%"
+
+
 def _run_capacity(args: argparse.Namespace, out: TextIO) -> None:
     """Break-even size under both conventions, which disagree about the limit.
 
@@ -2133,25 +2153,30 @@ def _run_capacity(args: argparse.Namespace, out: TextIO) -> None:
         "continuum": break_even_continuum(mandate, horizon=args.horizon),
     }
 
-    rates: list[tuple[float, float, Capacity | None]] = []
+    rates: list[_RateRow] = []
     for participation in args.participations:
         floor = alpha_floor(mandate, participation)
         try:
-            rates.append(
-                (participation, floor, break_even_at_participation(mandate, participation))
-            )
+            found = break_even_at_participation(mandate, participation)
         except UnboundedCapacityError:
-            rates.append((participation, floor, None))
+            rates.append(_RateRow(participation, floor, None, "unbounded"))
+        except ValidationError as refusal:
+            # One rate the model cannot describe must not take the rates it can
+            # describe down with it. The reason travels with the row.
+            rates.append(_RateRow(participation, floor, None, str(refusal)))
+        else:
+            rates.append(_RateRow(participation, floor, found, None))
     payload["participation"] = [
         {
-            "participation": rate,
-            "alpha_floor": floor,
-            "quantity": None if found is None else found.quantity,
-            "volume_days": None if found is None else found.volume_days,
-            "horizon": None if found is None else found.horizon,
-            "headroom": None if found is None else found.headroom,
+            "participation": row.rate,
+            "alpha_floor": row.floor,
+            "quantity": None if row.found is None else row.found.quantity,
+            "volume_days": None if row.found is None else row.found.volume_days,
+            "horizon": None if row.found is None else row.found.horizon,
+            "headroom": None if row.found is None else row.found.headroom,
+            "refused": row.refusal,
         }
-        for rate, floor, found in rates
+        for row in rates
     ]
 
     if mandate.risk_aversion > 0.0:
@@ -2193,13 +2218,17 @@ def _run_capacity(args: argparse.Namespace, out: TextIO) -> None:
         f"  {'rate':>6}  {'alpha floor':>12}  {'capacity':>14}  {'periods':>9}  {'horizon':>9}",
         file=out,
     )
-    for rate, floor, found in rates:
-        if found is None:
-            print(f"  {rate:>5.1%}  {floor:>12.6f}  {'none':>14}  {'-':>9}  {'-':>9}", file=out)
+    for row in rates:
+        if row.found is None:
+            print(
+                f"  {_rate_text(row.rate):>6}  {row.floor:>12.6f}  "
+                f"{'none':>14}  {'-':>9}  {'-':>9}",
+                file=out,
+            )
         else:
             print(
-                f"  {rate:>5.1%}  {floor:>12.6f}  {found.quantity:>14,.0f}  "
-                f"{found.volume_days:>9.2f}  {found.horizon:>9.2f}",
+                f"  {_rate_text(row.rate):>6}  {row.floor:>12.6f}  {row.found.quantity:>14,.0f}  "
+                f"{row.found.volume_days:>9.2f}  {row.found.horizon:>9.2f}",
                 file=out,
             )
     print(
@@ -2207,6 +2236,9 @@ def _run_capacity(args: argparse.Namespace, out: TextIO) -> None:
         "temporary impact of the rate itself is already the whole edge",
         file=out,
     )
+    for row in rates:
+        if row.refusal is not None and row.refusal != "unbounded":
+            print(f"  {_rate_text(row.rate)}: {row.refusal}", file=out)
     if mandate.risk_aversion > 0.0:
         best = uniform_optimal_horizon(mandate, fixed.quantity)
         print(file=out)
