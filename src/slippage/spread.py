@@ -395,6 +395,26 @@ class Accuracy:
     #: The mean before negatives were floored, which is what the bias would
     #: have been without that step.
     unfloored_mean: float
+    #: Sample standard deviation of the estimates across runs, ``ddof=1``.
+    #: Zero at a single run, where the dispersion is not estimable.
+    dispersion: float
+
+    @property
+    def standard_error(self) -> float:
+        """Standard error of :attr:`mean`, which is not ``rmse / sqrt(runs)``.
+
+        ``rmse`` is measured about the *truth*, so it carries the bias:
+        ``rmse**2 = (mean - truth)**2 + population variance``, exactly. Where
+        an estimator is badly biased -- which is where this table is worth
+        reading -- that makes ``rmse / sqrt(runs)`` an overstatement of how
+        little is known about the mean, by a factor of ten at a
+        spread-to-volatility ratio of 0.05. The dispersion is the half of
+        ``rmse`` that describes the sampling, and it is the half a standard
+        error is made of.
+        """
+        if self.runs < 2:
+            return 0.0
+        return self.dispersion / math.sqrt(self.runs)
 
 
 def score_estimators(
@@ -432,6 +452,11 @@ def score_estimators(
         mean = math.fsum(values) / len(values)
         rmse = math.sqrt(math.fsum((value - spread) ** 2 for value in values) / len(values))
         refused = math.fsum(result.rejection_rate for result in results) / len(results)
+        spread_of_values = 0.0
+        if len(values) > 1:
+            spread_of_values = math.sqrt(
+                math.fsum((value - mean) ** 2 for value in values) / (len(values) - 1)
+            )
         out.append(
             Accuracy(
                 estimator=one,
@@ -442,6 +467,7 @@ def score_estimators(
                 bias=mean / spread - 1.0 if spread > 0.0 else math.inf,
                 refusal_rate=refused,
                 unfloored_mean=math.fsum(result.unfloored for result in results) / len(results),
+                dispersion=spread_of_values,
             )
         )
     return tuple(out)

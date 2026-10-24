@@ -432,3 +432,86 @@ class TestRefusalsOfInput:
                 rejected=0,
                 unfloored=0.01,
             )
+
+
+# The standard error, which used to be the rmse's rather than the dispersion's.
+#
+# rmse is measured about the truth, so it carries the bias; a standard error of
+# the mean is made of the sampling half alone. The identity between them is
+# exact, so it is asserted as an equality.
+
+
+class TestStandardError:
+    def test_the_rmse_splits_exactly_into_bias_and_dispersion(self) -> None:
+        rows = score_estimators(
+            days=252,
+            spread=0.001,
+            volatility=DAILY_VOLATILITY,
+            runs=200,
+            ticks=78,
+            seed=1000,
+        )
+        for row in rows:
+            population = row.dispersion**2 * (row.runs - 1) / row.runs
+            assert row.rmse**2 == pytest.approx(
+                (row.mean - row.truth) ** 2 + population, rel=1e-12, abs=0.0
+            )
+
+    def test_the_standard_error_is_the_dispersion_over_the_root_of_the_runs(self) -> None:
+        rows = score_estimators(
+            days=252,
+            spread=0.001,
+            volatility=DAILY_VOLATILITY,
+            runs=200,
+            ticks=78,
+            seed=1000,
+        )
+        for row in rows:
+            assert row.standard_error == pytest.approx(
+                row.dispersion / math.sqrt(row.runs), rel=1e-12, abs=0.0
+            )
+
+    def test_the_old_reading_overstated_it_where_the_bias_was_large(self) -> None:
+        """And agreed with the right one where it was not, which is why it stood.
+
+        Both halves matter. At a spread-to-volatility ratio of 0.05 the biased
+        estimator's standard error was overstated twelvefold; at 1.0, where the
+        estimators are nearly unbiased, the two readings are within a third of
+        each other. A test of the first alone would not say that the old
+        formula was wrong rather than merely different.
+        """
+        inflations = {}
+        for spread in (0.001, 0.020):
+            rows = score_estimators(
+                days=252,
+                spread=spread,
+                volatility=DAILY_VOLATILITY,
+                runs=200,
+                ticks=78,
+                seed=1000,
+            )
+            inflations[spread] = {
+                row.estimator.value: (row.rmse / math.sqrt(row.runs)) / row.standard_error
+                for row in rows
+            }
+        assert inflations[0.001]["corwin-schultz"] == pytest.approx(12.50, abs=0.02)
+        assert max(inflations[0.020].values()) < 1.35
+        # The estimator whose bias is worst is the one most overstated, which
+        # is the mechanism rather than a coincidence of this parameterisation.
+        worst = max(inflations[0.001], key=lambda name: inflations[0.001][name])
+        assert worst == "corwin-schultz"
+
+    def test_a_single_run_has_no_dispersion_to_report(self) -> None:
+        rows = score_estimators(
+            days=60,
+            spread=0.01,
+            volatility=DAILY_VOLATILITY,
+            runs=1,
+            ticks=78,
+            seed=7,
+        )
+        for row in rows:
+            assert row.dispersion == 0.0
+            assert row.standard_error == 0.0
+            # And the rmse is then the bias exactly, there being nothing else.
+            assert row.rmse == pytest.approx(abs(row.mean - row.truth), rel=1e-12, abs=0.0)

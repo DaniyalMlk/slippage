@@ -20,6 +20,7 @@ to the mean.
 from __future__ import annotations
 
 import math
+from decimal import Decimal, localcontext
 from itertools import pairwise
 
 import numpy as np
@@ -34,6 +35,7 @@ from slippage.placement import (
     moments,
     monitoring_shift,
     simulate_placement,
+    terminal_probability,
 )
 
 VOL = 0.20
@@ -433,3 +435,156 @@ class TestValidation:
         assert evaluate(first).fill_probability == pytest.approx(
             evaluate(second).fill_probability, rel=1e-14
         )
+
+
+# Ending below the limit, which is not the same as touching it -- and which the
+# CLI used to compute with the drift left out, while everything printed beside
+# it carried the drift.
+
+
+class TestTerminalProbability:
+    def test_the_factor_is_exactly_two_with_no_drift(self) -> None:
+        """Not a tolerance: the running probability *is* twice the terminal one.
+
+        With no drift the Girsanov tilt is one and the reflected tail equals
+        the body, so the running probability is the terminal one added to
+        itself. Dividing a float by half of itself is exact, so the ratio is
+        2.0 and not 2.0 within something.
+        """
+        for distance in (0.01, 0.05, 0.2, 1.0, 1.6):
+            resting = Placement(distance=distance, horizon=YEAR, volatility=VOL)
+            assert evaluate(resting).fill_probability / terminal_probability(resting) == 2.0
+
+    def test_a_drift_breaks_the_factor_in_both_directions(self) -> None:
+        adverse = Placement(distance=0.05, horizon=YEAR, volatility=VOL, drift=0.2)
+        favourable = Placement(distance=0.05, horizon=YEAR, volatility=VOL, drift=-0.2)
+        assert terminal_probability(adverse) == pytest.approx(0.105650, rel=1e-5)
+        assert terminal_probability(favourable) == pytest.approx(0.773373, rel=1e-5)
+        assert evaluate(adverse).fill_probability / terminal_probability(adverse) == pytest.approx(
+            5.439898, rel=1e-6
+        )
+        assert evaluate(favourable).fill_probability / terminal_probability(
+            favourable
+        ) == pytest.approx(1.225230, rel=1e-6)
+
+    def test_the_driftless_reading_was_wrong_both_ways(self) -> None:
+        """What the CLI used to print, kept so the test says what it defends.
+
+        It is closest to right at zero drift, where there is nothing to learn,
+        and wrong in opposite directions either side -- which is worse than a
+        consistent bias, because the sign of the error depends on the input.
+        """
+        for drift, driftless_ratio, correct_ratio in (
+            (0.2, 1.432178, 5.439898),
+            (-0.2, 2.361262, 1.225230),
+        ):
+            resting = Placement(distance=0.05, horizon=YEAR, volatility=VOL, drift=drift)
+            driftless = 0.5 * math.erfc(resting.standardised_distance / math.sqrt(2.0))
+            running = evaluate(resting).fill_probability
+            assert running / driftless == pytest.approx(driftless_ratio, rel=1e-6)
+            assert running / terminal_probability(resting) == pytest.approx(correct_ratio, rel=1e-6)
+        # And it does not depend on the drift at all, which is the defect
+        # stated as a property rather than as two numbers.
+        readings = {
+            0.5
+            * math.erfc(
+                Placement(
+                    distance=0.05, horizon=YEAR, volatility=VOL, drift=drift
+                ).standardised_distance
+                / math.sqrt(2.0)
+            )
+            for drift in (-0.2, 0.0, 0.2)
+        }
+        assert len(readings) == 1
+
+    def test_it_falls_with_an_adverse_drift_and_never_exceeds_the_fill(self) -> None:
+        previous = 1.0
+        for drift in (-0.4, -0.2, -0.05, 0.0, 0.05, 0.2, 0.4):
+            resting = Placement(distance=0.05, horizon=YEAR, volatility=VOL, drift=drift)
+            terminal = terminal_probability(resting)
+            assert terminal < previous
+            previous = terminal
+            # A path that ends below the limit touched it on the way, so the
+            # running probability bounds the terminal one.
+            assert terminal <= evaluate(resting).fill_probability
+
+    def test_it_is_the_moments_own_first_term(self) -> None:
+        """Read off the library rather than recomputed, so there is one place to be wrong."""
+        resting = Placement(distance=0.05, horizon=YEAR, volatility=VOL, drift=0.1)
+        assert terminal_probability(resting) == moments(resting).terminal_probability
+
+
+def normal_cdf_to_sixty_digits(z: float) -> Decimal:
+    """``Phi(z)`` at sixty digits, by series below three and continued fraction above.
+
+    An independent reference rather than a rearrangement of the module's own
+    arithmetic: neither branch here is the formula being checked, and the
+    precision is set high enough that the comparison is about the double
+    rather than about this.
+    """
+    with localcontext() as context:
+        context.prec = 60
+        root_pi = Decimal("1.7724538509055160272981674833411451827975494561223871282138077898")
+        x = -Decimal(repr(z)) / Decimal(2).sqrt()
+        if abs(x) < 3:
+            term = x
+            total = x
+            index = 0
+            while True:
+                index += 1
+                term = term * (-x * x) / index
+                addend = term / (2 * index + 1)
+                total += addend
+                if abs(addend) < Decimal(10) ** -55:
+                    break
+            complementary = 1 - total * 2 / root_pi
+        elif x > 0:
+            squared = 2 * x * x
+            fraction = Decimal(0)
+            for index in range(200, 0, -1):
+                fraction = Decimal(index) / (squared * (1 + fraction))
+            complementary = (-x * x).exp() / (x * root_pi) / (1 + fraction)
+        else:
+            return 1 - normal_cdf_to_sixty_digits(-z)
+        return +(complementary / 2)
+
+
+class TestTheUpperTailIsNotAComplement:
+    """``1 - Phi(x)`` is a cancellation once the tail is small, and the tail is the answer.
+
+    `routing.py` already sums its tails from the top and says why in its module
+    docstring. That lesson had not reached this module, where the reflected
+    law's upper tail was written as a complement -- so the fix is one line and
+    the reason it is worth a test is that the same mistake was already known
+    about somewhere else in the same package.
+    """
+
+    @pytest.mark.parametrize("deviations", [0.25, 1.0, 5.0, 8.0])
+    def test_the_fill_probability_against_a_sixty_digit_reference(self, deviations: float) -> None:
+        resting = Placement(distance=deviations * VOL, horizon=YEAR, volatility=VOL)
+        reference = 2 * normal_cdf_to_sixty_digits(-deviations)
+        measured = Decimal(repr(evaluate(resting).fill_probability))
+        assert abs(measured - reference) / reference < Decimal("1e-14")
+
+    @pytest.mark.parametrize(
+        ("deviations", "complement_error"),
+        [(5.0, 1.5e-10), (8.0, 7.1e-2)],
+    )
+    def test_the_complement_form_would_have_been_wrong_by_this_much(
+        self, deviations: float, complement_error: float
+    ) -> None:
+        """Both halves: the error the old form carried, and that it was an error.
+
+        Quoted as the size it reaches rather than as a bound, since the point
+        is that it grows with the distance -- it is 1.5e-10 of the answer at
+        five standard deviations and 7.1% at eight, where a bound alone would
+        suggest a fixed cost.
+        """
+        reference = normal_cdf_to_sixty_digits(-deviations)
+        # ``1 - Phi(d)`` against ``Phi(-d)``: the same tail, one of them taken
+        # as a complement of a number near one.
+        complement = Decimal(repr(1.0 - 0.5 * math.erfc(-deviations / math.sqrt(2.0))))
+        direct = Decimal(repr(0.5 * math.erfc(deviations / math.sqrt(2.0))))
+        measured = float(abs(complement - reference) / reference)
+        assert measured == pytest.approx(complement_error, rel=0.1)
+        assert abs(direct - reference) / reference < Decimal("1e-14")

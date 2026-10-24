@@ -115,6 +115,7 @@ from .placement import (
     moments,
     monitoring_shift,
     simulate_placement,
+    terminal_probability,
 )
 from .report import (
     Aggregate,
@@ -431,6 +432,7 @@ __all__ = [
     "spike_response",
     "static_schedule",
     "synthetic_book",
+    "terminal_probability",
     "tracking_frontier",
     "tracking_moments",
     "tracking_schedule",

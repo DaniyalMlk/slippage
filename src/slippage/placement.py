@@ -111,6 +111,7 @@ __all__ = [
     "moments",
     "monitoring_shift",
     "simulate_placement",
+    "terminal_probability",
 ]
 
 # ``simulate`` on its own would shadow :mod:`slippage.simulate` at package
@@ -227,11 +228,17 @@ class Moments:
         probability: ``P(min <= -distance)``, the fill probability.
         first: ``E[X_T 1{min <= -distance}]``.
         second: ``E[X_T**2 1{min <= -distance}]``.
+        terminal_probability: ``P(X_T <= -distance)``, the mid *ending* below
+            the limit. The first term of the reflection, and the thing the fill
+            probability is worth comparing against. Carried here rather than
+            left as a local because a caller that recomputes it is a caller
+            that can forget the drift.
     """
 
     probability: float
     first: float
     second: float
+    terminal_probability: float
 
 
 def moments(placement: Placement) -> Moments:
@@ -272,7 +279,12 @@ def moments(placement: Placement) -> Moments:
     # Above it: the reflected law, mean 2b + mu T, truncated from below.
     reflected = 2.0 * barrier + mean
     standard_up = (barrier - reflected) / deviation
-    tail = 1.0 - _normal_cdf(standard_up)
+    # The upper tail by symmetry rather than as ``1 - cdf``, which is a
+    # cancellation once the tail is small: at five standard deviations the
+    # complement form is 1.5e-10 of the answer away from a sixty-digit
+    # reference and at eight it is 7.1% away, while this form is within 6e-15
+    # at both. A limit order five standard deviations out is a real order.
+    tail = _normal_cdf(-standard_up)
     pdf_up = _normal_pdf(standard_up)
     above_probability = tail
     above_first = reflected * tail + deviation * pdf_up
@@ -284,7 +296,23 @@ def moments(placement: Placement) -> Moments:
         probability=below_probability + tilt * above_probability,
         first=below_first + tilt * above_first,
         second=below_second + tilt * above_second,
+        terminal_probability=below_probability,
     )
+
+
+def terminal_probability(placement: Placement) -> float:
+    """``P(X_T <= -distance)``: the mid *ending* below the limit.
+
+    The quantity the fill probability is worth comparing against, since a limit
+    order fills on the running minimum rather than on the close. With no drift
+    the ratio of the two is exactly two, which is the module's headline result;
+    with a drift it is not, and the drift is what makes the comparison worth
+    making at all. A reading that leaves the drift out of this one term gives
+    1.43 at one standard deviation of adverse drift where the answer is 5.44,
+    and 2.36 where it is 1.23 at the same drift reversed -- wrong in both
+    directions, and closest to right exactly where there is nothing to learn.
+    """
+    return moments(placement).terminal_probability
 
 
 @dataclass(frozen=True)
