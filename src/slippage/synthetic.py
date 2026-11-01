@@ -29,6 +29,18 @@ __all__ = ["DecayingBook", "SyntheticBook", "decaying_book", "synthetic_book"]
 SESSION_OPEN = time(9, 30)
 SESSION_MINUTES = 390
 
+#: Exclusive upper bound on the minute of the session at which
+#: :func:`decaying_book` starts an order, so the latest start is one less.
+LATEST_START = 40
+
+#: Longest execution window :func:`decaying_book` accepts. One fill is written
+#: per execution minute against a bar of the same session, so an order starting
+#: at minute ``LATEST_START - 1`` reads bars up to
+#: ``LATEST_START - 1 + execution_minutes - 1``, which has to stay inside the
+#: session. The ``+ 1`` is that arithmetic rather than a margin: without it the
+#: cap would refuse a window that fits.
+LONGEST_EXECUTION = SESSION_MINUTES - LATEST_START + 1
+
 
 @dataclass(frozen=True)
 class SyntheticBook:
@@ -238,6 +250,20 @@ def decaying_book(
     """
     if execution_minutes < 1:
         raise ValidationError(f"execution_minutes must be positive, got {execution_minutes!r}")
+    if execution_minutes > LONGEST_EXECUTION:
+        # The other end of the same guard. One fill is written per execution
+        # minute, reading the price off a bar indexed from a start the generator
+        # draws between minute 10 and minute `LATEST_START`, so a long enough
+        # window indexes past the close. Left open, that surfaced as a bare
+        # IndexError from inside a comprehension, at a threshold that depended
+        # on the draw: every start fits at 350 minutes and none at 380. The
+        # limit is taken from the latest start rather than from the start drawn,
+        # so what the generator accepts does not depend on the seed.
+        raise ValidationError(
+            f"execution_minutes must leave room in the session: a start as late as minute "
+            f"{LATEST_START - 1} of {SESSION_MINUTES} caps it at {LONGEST_EXECUTION}, "
+            f"got {execution_minutes!r}"
+        )
     if half_life <= timedelta(0):
         raise ValidationError(f"half_life must be positive, got {half_life!r}")
     decay = half_life.total_seconds() / math.log(2.0)
@@ -261,7 +287,7 @@ def decaying_book(
         base = float(rng.uniform(20.0, 200.0))
         quantity = float(round(rng.uniform(20_000.0, 80_000.0), -2))
         noise = np.cumsum(rng.normal(0.0, idiosyncratic_volatility_bps, SESSION_MINUTES))
-        start_minute = int(rng.integers(10, 40))
+        start_minute = int(rng.integers(10, LATEST_START))
         start = opening + start_minute * minute
         finish = start + execution_minutes * minute
         prices: list[float] = []
