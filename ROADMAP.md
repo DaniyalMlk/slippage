@@ -1154,3 +1154,42 @@ the other. The sweep for further sites found one more complement,
 `1 - fill_probability`, where the small quantity is a correction to a larger
 term rather than the answer, so the absolute error it carries is the right thing
 to care about and it is left alone.
+
+## Phase 26 — Options nobody had chosen
+
+A documented parameter with a default is a claim: that the caller may choose,
+and that choosing works. Six parameters in this repository had never been
+supplied by any call site, so the code that reads them only ever ran with the
+one value each author picked. Asked mechanically rather than remembered.
+
+- [x] `decaying_book(execution_minutes=)` guarded at the upper end as well as
+      the lower: one fill is written per execution minute against a bar of a
+      390-minute session, and a long enough window raised a bare `IndexError`
+      from inside a comprehension
+- [x] The cap derived from the latest start the generator can draw rather than
+      the start it drew, so the limit does not move with the seed — before, every
+      start fitted at 350 minutes and none at 380, with the cases in between
+      failing for some orders and not others
+- [x] The cap's arithmetic asserted rather than its value copied: the latest
+      start plus the longest window is the last bar of the session, and one more
+      minute is past it
+- [x] `synthetic_book(impact_y=)` checked off the fill prices to the tick at
+      four coefficients, including zero, where only the half spread is left
+- [x] Its linearity recorded, because it is what a parametrised recovery test
+      would not say: the generator is linear in the coefficient and the fit is a
+      weighted linear regression, so two coefficients that look like two cases
+      are one case — the fitted value moves with the coefficient exactly and the
+      standard error, measured at 0.0946, does not move at all between 0.1 and
+      2.5
+- [x] Both `day` options checked as every timestamp the generators emit, the
+      index series included, and the prints asserted identical a year apart so
+      that a date reaching the randomness would show
+- [x] `fill_distribution(exclude=)` checked against an enumeration of the other
+      venues' supports, against the marginal whose closed form is written in
+      terms of it, and for the index outside the range that leaves every venue in
+- [x] `SimulatedValue.covers(errors=)` checked at both edges of the interval and
+      at an unmeasured standard error, where no width rescues it
+- [x] The probe made a gate, with no exemption mechanism, and the conservatism
+      of its result rule asserted: `SquareRootLaw` is both returned and
+      constructed, so the gate cannot see a pair of options callers do choose
+- [x] Twelve ways of breaking it confirmed to fail first, the gate among them
