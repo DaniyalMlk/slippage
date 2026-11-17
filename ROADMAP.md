@@ -1222,3 +1222,29 @@ conversions to and from them were among the seven.
 - [x] Broken three ways before relying on it — a whole module unwired, a
       phantom root entry, a pinned module gaining a declaration — and failing
       each time
+
+## Phase 28 — One definition of a name, and nothing exempt by default
+
+Phase 27 asserted that the root carries what the modules declare, and pinned
+two cases rather than ruling on them: two modules that declared nothing, and an
+array alias defined five times over. Both pins are empty now.
+
+- [x] `FloatArray` and `Floats` defined once in `types`: five
+      character-for-character identical definitions in `adaptive`, `basket`,
+      `calibration`, `tracking` and `transient`, each appearing in that
+      module's public signatures, so a caller could call the functions and not
+      name what they take or return
+- [x] One name, one definition, asserted across the package: the root is a flat
+      namespace, so five copies meant exporting the name was choosing a copy.
+      238 public definitions, no collision
+- [x] `basket` and `reversion` declare `__all__`. Neither needed an export
+      added — every name was already at the root — only the declaration that
+      lets anything check it
+- [x] Both pins kept rather than deleted, so re-introducing either case is a
+      decision written down here, and both rules exercised against input built
+      for the purpose now that the package offers no case
+- [x] A pin must bear weight: an entry naming a module that declares something,
+      or an alias that is at the root, fails
+- [x] Ten ways of breaking it confirmed to fail first. Two did not on the first
+      pass — a module redefining the alias locally, and an emptied pin quietly
+      refilled — and those two gaps are what the rules above close
