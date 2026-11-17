@@ -112,11 +112,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
-from numpy.typing import NDArray
 
 from .exceptions import ValidationError
 from .execution import ExecutionProblem, Trajectory, trajectory_from_trades
 from .impact import LinearImpact
+from .types import FloatArray
 
 __all__ = [
     "AdaptivePolicy",
@@ -132,7 +132,6 @@ __all__ = [
     "static_schedule",
 ]
 
-FloatArray = NDArray[np.float64]
 
 #: Rows of a transition matrix are allowed to miss one by this much before the
 #: matrix is refused. Tighter than the tolerance on a sum of a few dozen

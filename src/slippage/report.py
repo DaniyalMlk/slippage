@@ -37,6 +37,8 @@ from .shortfall import DelayBasis, ShortfallBreakdown, participation_rate, short
 from .types import Order, Side
 
 __all__ = [
+    "COMPONENTS",
+    "OUTLIER_THRESHOLD",
     "Aggregate",
     "ModelComparison",
     "OrderReport",

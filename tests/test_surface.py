@@ -26,10 +26,18 @@ disagreement inside the package: a module declaring a name public while the
 root does not carry it. Deciding here which names *ought* to be public would
 put the judgement somewhere other than beside the code it is about.
 
-**Containment, not yet equality.** ``basket`` and ``reversion`` declare no
-``__all__``, so for those two there is no declaration to compare the root
-against, and several modules define public names their ``__all__`` omits. Both
-are pinned below rather than ruled on here.
+**Equality, now that every module can carry it.** It could not be asserted at
+first: ``basket`` and ``reversion`` declared no ``__all__``, and eight modules
+defined public names their own ``__all__`` omitted — sixteen documented
+thresholds and layouts, such as ``calibration.MIN_OBSERVATIONS`` and
+``io.ORDER_COLUMNS``, and an array alias, ``FloatArray``, defined separately in
+five modules. Declaring the thresholds recorded what their docstrings already
+said. The alias is now defined once, in ``types``, and imported by the five.
+
+That makes a further claim available, and it is the one that catches the next
+omission rather than this one: **a module's ``__all__`` contains every public
+name the module defines.** A name added and not declared fails at the module
+instead of travelling to the root for somebody to notice.
 """
 
 from __future__ import annotations
@@ -52,20 +60,12 @@ NOT_SURFACE = frozenset({"cli", "__main__"})
 
 #: Modules that declare no ``__all__``. Pinned rather than discovered, so that
 #: a new module arriving without one is a decision somebody makes here instead
-#: of a silent exemption from every check in this file. Both are exercised in
-#: full by their own tests and both have every name at the root; what they lack
-#: is the declaration that would let anything check that.
-NO_DUNDER_ALL = frozenset({"basket", "reversion"})
+#: of a silent exemption from every check in this file.
+NO_DUNDER_ALL: frozenset[str] = frozenset()
 
 #: Names in the root's ``__all__`` that no module declares. ``__version__`` is
-#: assigned in ``__init__.py`` itself, so it is the one legitimate entry; the
-#: root's names from the undeclared modules are accounted for separately.
+#: assigned in ``__init__.py`` itself, so it is the one legitimate entry.
 ROOT_ONLY = frozenset({"__version__"})
-
-#: Array aliases that several modules each define for their own signatures.
-#: ``basket`` is one of them. Whether one shared alias belongs at the root is a
-#: question for the modules that define them, not for a containment check.
-LOCAL_ALIASES = frozenset({"FloatArray", "Floats"})
 
 #: Source written to exercise :func:`public_names_in`, not to be a module.
 PROBE_SOURCE = '''
@@ -232,33 +232,51 @@ def test_every_module_declares_something() -> None:
     )
 
 
-def test_the_undeclared_modules_are_at_the_root_anyway(root: frozenset[str]) -> None:
-    """What the declaration-based checks cannot see, read from source.
+def test_a_module_declares_every_public_name_it_defines() -> None:
+    """``__all__`` is not a curated subset of what the module defines.
 
-    A module with no ``__all__`` is invisible to every check above, so its
-    public definitions are read with the AST probe instead and required at the
-    root. This is containment the other way round: it says the root is not
-    missing them, not that each is meant to be public.
+    A name added to a module and left out of its ``__all__`` fails here, at the
+    module, instead of reaching the root check as a name nobody wired in.
+    Twenty-two definitions failed it, and two modules had no declaration at all.
     """
-    missing = {
-        module: sorted(public_definitions(module) - root - LOCAL_ALIASES)
-        for module in NO_DUNDER_ALL
-    }
-    missing = {module: names for module, names in missing.items() if names}
-    assert not missing, f"defined in a module with no __all__ and absent from the root: {missing}"
+    undeclared: dict[str, list[str]] = {}
+    for module, names in declared().items():
+        missing = sorted(public_definitions(module) - names)
+        if missing:
+            undeclared[module] = missing
+    assert not undeclared, (
+        f"defined at a module's top level and absent from its own __all__: {undeclared}"
+    )
 
 
-def test_the_root_holds_nothing_no_module_accounts_for(root: frozenset[str]) -> None:
-    """The root offers no name that no module claims.
+def test_no_public_name_is_defined_twice() -> None:
+    """One definition per public name across the package.
 
-    A name only the root mentions is what a hand-kept list accumulates: an
-    entry left behind by a rename, or one exported from the wrong place. The
-    two undeclared modules are accounted for by what their source defines.
+    ``FloatArray`` was assigned in five modules. The five agreed, so nothing
+    was wrong yet, but a flat root namespace can carry only one of them, and
+    which one it carried would have been decided by import order.
+    """
+    owners: dict[str, list[str]] = {}
+    for module in submodules():
+        for name in public_definitions(module):
+            owners.setdefault(name, []).append(module)
+    repeated = {name: sorted(mods) for name, mods in owners.items() if len(mods) > 1}
+    assert not repeated, f"public names defined in more than one module: {repeated}"
+
+
+def test_the_root_is_exactly_the_union_of_the_declarations(root: frozenset[str]) -> None:
+    """Equality, not containment.
+
+    Containment catches a name the root is missing. This catches the other
+    direction — a name the root offers that no module claims — which is what a
+    hand-kept list accumulates: an entry left behind by a rename, or one
+    exported from the wrong place.
     """
     union = frozenset().union(*declared().values())
-    undeclared = frozenset().union(*(public_definitions(m) for m in NO_DUNDER_ALL))
-    stray = sorted(root - union - undeclared - ROOT_ONLY)
-    assert not stray, f"at the root and claimed by no module: {stray}"
+    assert root == union | ROOT_ONLY, (
+        f"only at the root: {sorted(root - union - ROOT_ONLY)}; "
+        f"only in a module: {sorted(union - root)}"
+    )
 
 
 def test_the_probe_reads_a_surface_worth_checking(root: frozenset[str]) -> None:
@@ -270,12 +288,11 @@ def test_the_probe_reads_a_surface_worth_checking(root: frozenset[str]) -> None:
     all — and ``costs`` is named because it is the module the defect centred on.
     """
     modules = declared()
-    assert len(modules) >= 20, f"only {len(modules)} modules declared an __all__"
-    assert len(root) >= 190, f"the root surface came back as {len(root)} names"
+    assert len(modules) >= 25, f"only {len(modules)} modules declared an __all__"
+    assert len(root) >= 210, f"the root surface came back as {len(root)} names"
     assert {"to_bps", "from_bps", "BPS_PER_UNIT"} <= modules["costs"]
-    assert {"basket_frontier", "price_reversion"} <= public_definitions(
-        "basket"
-    ) | public_definitions("reversion")
+    assert "basket_frontier" in modules["basket"]
+    assert "price_reversion" in modules["reversion"]
 
 
 def test_the_probe_reads_each_kind_of_definition_and_skips_each_non_definition() -> None:

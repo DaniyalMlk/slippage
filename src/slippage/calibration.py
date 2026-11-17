@@ -17,20 +17,22 @@ from __future__ import annotations
 
 import math
 import warnings
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any
 
 import numpy as np
-from numpy.typing import NDArray
 
 from .exceptions import CalibrationError, IdentifiabilityWarning, InsufficientDataError
 from .impact import LinearImpact, SquareRootLaw
 from .series import BarSeries
-from .types import Order
+from .types import FloatArray, Floats, Order
 
 __all__ = [
+    "MAX_EXPONENT_STD_ERROR",
+    "MIN_OBSERVATIONS",
+    "MIN_RATE_DISPERSION",
+    "MIN_SIZE_RANGE",
     "Estimate",
     "ExecutionSample",
     "LinearTemporaryFit",
@@ -41,8 +43,6 @@ __all__ = [
     "samples_from_orders",
 ]
 
-FloatArray = NDArray[np.float64]
-Floats = Sequence[float] | NDArray[np.floating[Any]]
 """Anything the fits accept as a column of numbers."""
 
 # Thresholds for the identifiability checks. Each is a judgement about when a

@@ -29,6 +29,9 @@ from .series import BarSeries
 from .types import Bar, Fill, Order, Side
 
 __all__ = [
+    "BAR_COLUMNS",
+    "FILL_COLUMNS",
+    "ORDER_COLUMNS",
     "InputError",
     "load_bars",
     "load_orders",
@@ -37,7 +40,7 @@ __all__ = [
     "write_orders",
 ]
 
-T = TypeVar("T")
+_T = TypeVar("_T")
 
 ORDER_COLUMNS = ("order_id", "symbol", "side", "quantity", "decision_time", "arrival_time")
 FILL_COLUMNS = ("order_id", "timestamp", "quantity", "price")
@@ -62,7 +65,9 @@ def read_rows(path: str | Path, required: tuple[str, ...]) -> Iterator[tuple[int
             yield reader.line_num, {k: (v or "").strip() for k, v in row.items() if k}
 
 
-def _field(source: Path, line: int, row: dict[str, str], name: str, parse: Callable[[str], T]) -> T:
+def _field(
+    source: Path, line: int, row: dict[str, str], name: str, parse: Callable[[str], _T]
+) -> _T:
     raw = row.get(name, "")
     try:
         return parse(raw)

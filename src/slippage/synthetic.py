@@ -24,7 +24,16 @@ from .exceptions import ValidationError
 from .series import BarSeries
 from .types import Bar, Fill, Order, Side
 
-__all__ = ["DecayingBook", "SyntheticBook", "decaying_book", "synthetic_book"]
+__all__ = [
+    "LATEST_START",
+    "LONGEST_EXECUTION",
+    "SESSION_MINUTES",
+    "SESSION_OPEN",
+    "DecayingBook",
+    "SyntheticBook",
+    "decaying_book",
+    "synthetic_book",
+]
 
 SESSION_OPEN = time(9, 30)
 SESSION_MINUTES = 390

@@ -69,12 +69,13 @@ from datetime import timedelta
 from typing import Protocol, runtime_checkable
 
 import numpy as np
-from numpy.typing import NDArray
 
 from .exceptions import CalibrationError, ValidationError
 from .reversion import Decay
+from .types import FloatArray
 
 __all__ = [
+    "DEFINITENESS_TOLERANCE",
     "DecayKernel",
     "ExponentialDecay",
     "PowerLawDecay",
@@ -88,7 +89,6 @@ __all__ = [
     "transient_cost",
 ]
 
-FloatArray = NDArray[np.float64]
 
 #: Relative tolerance for the positive-definiteness check. The cost matrix
 #: restricted to zero-sum directions is singular by construction -- the
