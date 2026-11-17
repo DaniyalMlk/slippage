@@ -33,6 +33,15 @@ ROOT = Path(__file__).resolve().parent.parent
 README = ROOT / "README.md"
 EVIDENCE = ROOT / "examples" / "evidence.py"
 
+#: The suite size on the front page, anchored to the sentence that states it.
+#: An unanchored ``([\d,]+) tests`` reads whichever figure comes first, and
+#: works here only because the page happens to count tests exactly once: every
+#: other figure on it — 1,820 schedules, 250 random problems, 200 books — is
+#: spelled with a different noun. The first count of tests written above line
+#: 98 would be compared against the collected total instead, leaving the real
+#: claim unchecked.
+SUITE_SIZE = re.compile(r"Behind them: ([\d,]+) tests")
+
 #: Row labels of the README's evidence table, as the script renders them.
 #: Written out rather than parsed from the README so that deleting a row from
 #: the table does not silently delete the check that defends it.
@@ -184,7 +193,7 @@ def test_the_suite_size_on_the_front_page_is_not_wildly_stale() -> None:
     trains people to update the number without reading it. A quarter either way
     still catches the README claiming hundreds when there are thousands.
     """
-    claimed = re.search(r"([\d,]+) tests", README.read_text(encoding="utf-8"))
+    claimed = SUITE_SIZE.search(README.read_text(encoding="utf-8"))
     assert claimed is not None, "the README no longer states a suite size"
     stated = int(claimed.group(1).replace(",", ""))
     collected = subprocess.run(
@@ -200,3 +209,28 @@ def test_the_suite_size_on_the_front_page_is_not_wildly_stale() -> None:
     assert 0.75 * actual <= stated <= 1.25 * actual, (
         f"the README says {stated} tests and there are {actual}"
     )
+
+
+def test_the_suite_size_pattern_is_not_satisfied_by_an_earlier_figure() -> None:
+    """The anchor is part of the claim, so a decoy above the line must not be read.
+
+    Checked against a page written for the purpose. The real README counts
+    tests exactly once, so nothing in it exercises this: a rule the source
+    never reaches is a rule nothing tests.
+    """
+    page = (
+        "The router against exhaustive search, 250 random problems\n"
+        "Checked against 42 tests of the reference implementation\n"
+        "\n"
+        "Behind them: 1,148 tests on Python 3.10 through 3.13\n"
+    )
+    unanchored = re.search(r"([\d,]+) tests", page)
+    assert unanchored is not None
+    assert unanchored.group(1) == "42", "the decoy no longer defeats the unanchored pattern"
+
+    anchored = SUITE_SIZE.search(page)
+    assert anchored is not None
+    assert anchored.group(1) == "1,148"
+
+    assert SUITE_SIZE.search("Behind them: many tests") is None
+    assert SUITE_SIZE.search("Behind them: 1,148 cases") is None
