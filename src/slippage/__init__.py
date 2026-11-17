@@ -226,7 +226,7 @@ from .transient import (
     residual_impact,
     transient_cost,
 )
-from .types import Bar, Fill, Order, Side
+from .types import Bar, Fill, FloatArray, Floats, Order, Side
 from .volume import (
     PovSchedule,
     VolumeProfile,
@@ -282,6 +282,8 @@ __all__ = [
     "Fill",
     "FillAttribution",
     "FillDistribution",
+    "FloatArray",
+    "Floats",
     "ForecastSchedule",
     "HalfLifeSensitivity",
     "Horizon",

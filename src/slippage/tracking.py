@@ -74,13 +74,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
-from numpy.typing import NDArray
 
 from .exceptions import ValidationError
 from .impact import ImpactModel, schedule_cost
+from .types import FloatArray
 from .volume import VolumeProfile
-
-FloatArray = NDArray[np.float64]
 
 __all__ = [
     "ObjectiveComparison",

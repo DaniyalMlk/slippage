@@ -22,13 +22,24 @@ cost positive.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import Any
+
+import numpy as np
+from numpy.typing import NDArray
 
 from .exceptions import ValidationError
 
-__all__ = ["Bar", "Fill", "Order", "Side"]
+__all__ = ["Bar", "Fill", "FloatArray", "Floats", "Order", "Side"]
+
+#: The float64 array type the package's signatures are written in.
+FloatArray = NDArray[np.float64]
+
+#: What a numerical argument accepts: a plain sequence or any floating array.
+Floats = Sequence[float] | NDArray[np.floating[Any]]
 
 # Quantities are floats because odd lots, currency notionals and fractional
 # shares all occur; comparisons therefore need a tolerance rather than ``==``.

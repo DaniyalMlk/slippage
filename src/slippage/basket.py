@@ -86,14 +86,11 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
-from numpy.typing import NDArray
 
 from .exceptions import ValidationError
 from .execution import ExecutionProblem, optimal_trajectory
 from .impact import LinearImpact
-
-FloatArray = NDArray[np.float64]
-Floats = Sequence[float] | NDArray[np.floating[Any]]
+from .types import FloatArray, Floats
 
 #: Smallest eigenvalue, relative to the largest, that a matrix may have and still
 #: be treated as positive definite. A matrix at the edge of singularity gives an
