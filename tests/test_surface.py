@@ -52,10 +52,8 @@ NOT_SURFACE = frozenset({"cli", "__main__"})
 
 #: Modules that declare no ``__all__``. Pinned rather than discovered, so that
 #: a new module arriving without one is a decision somebody makes here instead
-#: of a silent exemption from every check in this file. Both are exercised in
-#: full by their own tests and both have every name at the root; what they lack
-#: is the declaration that would let anything check that.
-NO_DUNDER_ALL = frozenset({"basket", "reversion"})
+#: of a silent exemption from every check in this file.
+NO_DUNDER_ALL: frozenset[str] = frozenset()
 
 #: Names in the root's ``__all__`` that no module declares. ``__version__`` is
 #: assigned in ``__init__.py`` itself, so it is the one legitimate entry; the

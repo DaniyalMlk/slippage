@@ -92,6 +92,21 @@ from .execution import ExecutionProblem, optimal_trajectory
 from .impact import LinearImpact
 from .types import FloatArray, Floats
 
+__all__ = [
+    "CONDITION_FLOOR",
+    "MAX_BASKET_ASSETS",
+    "BasketComparison",
+    "BasketProblem",
+    "BasketTrajectory",
+    "Direction",
+    "basket_frontier",
+    "basket_moments",
+    "basket_trajectory",
+    "compare_to_independent",
+    "hedge_direction",
+    "independent_trajectories",
+]
+
 #: Smallest eigenvalue, relative to the largest, that a matrix may have and still
 #: be treated as positive definite. A matrix at the edge of singularity gives an
 #: inverse square root with entries of order the reciprocal of that ratio, and the
