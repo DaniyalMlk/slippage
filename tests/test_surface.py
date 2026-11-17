@@ -50,22 +50,25 @@ import slippage
 #: ``python -m slippage`` works.
 NOT_SURFACE = frozenset({"cli", "__main__"})
 
-#: Modules that declare no ``__all__``. Pinned rather than discovered, so that
-#: a new module arriving without one is a decision somebody makes here instead
-#: of a silent exemption from every check in this file. Both are exercised in
-#: full by their own tests and both have every name at the root; what they lack
-#: is the declaration that would let anything check that.
-NO_DUNDER_ALL = frozenset({"basket", "reversion"})
+#: Modules that declare no ``__all__``. Empty: ``basket`` and ``reversion``
+#: were the last two and now declare one. The pin and the rules that read it
+#: stay, because a module arriving without a declaration would be exempt from
+#: every check in this file, and the point is that such an exemption has to be
+#: written down here to exist. Both rules are exercised against a map built for
+#: the purpose, since the package no longer offers a case.
+NO_DUNDER_ALL: frozenset[str] = frozenset()
 
 #: Names in the root's ``__all__`` that no module declares. ``__version__`` is
 #: assigned in ``__init__.py`` itself, so it is the one legitimate entry; the
 #: root's names from the undeclared modules are accounted for separately.
 ROOT_ONLY = frozenset({"__version__"})
 
-#: Array aliases that several modules each define for their own signatures.
-#: ``basket`` is one of them. Whether one shared alias belongs at the root is a
-#: question for the modules that define them, not for a containment check.
-LOCAL_ALIASES = frozenset({"FloatArray", "Floats"})
+#: Aliases a module defines for its own signatures and the root does not carry.
+#: Empty: ``FloatArray`` and ``Floats`` were defined five times over, and are
+#: now defined once in ``types`` and exported under that one name. An alias in
+#: a public signature that a caller cannot name is the case this excused, so
+#: the exemption stays available and has to be stated to apply.
+LOCAL_ALIASES: frozenset[str] = frozenset()
 
 #: Source written to exercise :func:`public_names_in`, not to be a module.
 PROBE_SOURCE = '''
@@ -232,6 +235,19 @@ def test_every_module_declares_something() -> None:
     )
 
 
+def undeclared_names_missing_from_root(
+    definitions: dict[str, frozenset[str]], root: frozenset[str], exempt: frozenset[str]
+) -> dict[str, list[str]]:
+    """Which public definitions of an undeclared module the root does not carry.
+
+    Separated from the package so that it can be exercised against a map built
+    for the purpose: with ``NO_DUNDER_ALL`` empty there is no module left that
+    reaches this rule, and a rule nothing reaches is a rule nothing tests.
+    """
+    missing = {name: sorted(names - root - exempt) for name, names in definitions.items()}
+    return {name: names for name, names in missing.items() if names}
+
+
 def test_the_undeclared_modules_are_at_the_root_anyway(root: frozenset[str]) -> None:
     """What the declaration-based checks cannot see, read from source.
 
@@ -240,12 +256,20 @@ def test_the_undeclared_modules_are_at_the_root_anyway(root: frozenset[str]) -> 
     root. This is containment the other way round: it says the root is not
     missing them, not that each is meant to be public.
     """
-    missing = {
-        module: sorted(public_definitions(module) - root - LOCAL_ALIASES)
-        for module in NO_DUNDER_ALL
-    }
-    missing = {module: names for module, names in missing.items() if names}
+    definitions = {module: public_definitions(module) for module in NO_DUNDER_ALL}
+    missing = undeclared_names_missing_from_root(definitions, root, LOCAL_ALIASES)
     assert not missing, f"defined in a module with no __all__ and absent from the root: {missing}"
+
+
+def test_the_undeclared_module_rule_catches_a_name_off_the_root() -> None:
+    """The rule above, against the case the package no longer provides."""
+    root = frozenset({"kept"})
+    definitions = {"silent": frozenset({"kept", "dropped"})}
+    assert undeclared_names_missing_from_root(definitions, root, frozenset()) == {
+        "silent": ["dropped"]
+    }
+    assert undeclared_names_missing_from_root(definitions, root, frozenset({"dropped"})) == {}
+    assert undeclared_names_missing_from_root({}, root, frozenset()) == {}
 
 
 def test_the_root_holds_nothing_no_module_accounts_for(root: frozenset[str]) -> None:
