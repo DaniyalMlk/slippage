@@ -58,6 +58,9 @@ from .calibration import (
     samples_from_orders,
 )
 from .capacity import (
+    BISECTION_STEPS,
+    DEFAULT_CEILING_IN_VOLUME,
+    MAX_PERIODS,
     Capacity,
     Horizon,
     Mandate,
@@ -72,7 +75,7 @@ from .capacity import (
     curvature,
     uniform_optimal_horizon,
 )
-from .costs import cost_bps, cost_currency, cost_per_share
+from .costs import BPS_PER_UNIT, cost_bps, cost_currency, cost_per_share, from_bps, to_bps
 from .exceptions import (
     CalibrationError,
     ConvergenceError,
@@ -103,7 +106,7 @@ from .impact import (
     schedule_cost,
     uniform_schedule,
 )
-from .io import InputError, load_bars, load_orders, write_bars, write_orders
+from .io import InputError, load_bars, load_orders, read_rows, write_bars, write_orders
 from .placement import (
     MONITORING_BETA,
     Moments,
@@ -237,10 +240,14 @@ from .volume import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "BISECTION_STEPS",
+    "BPS_PER_UNIT",
     "CONDITION_FLOOR",
+    "DEFAULT_CEILING_IN_VOLUME",
     "DEFAULT_HORIZONS",
     "IMPACT_FLOOR_BPS",
     "MAX_BASKET_ASSETS",
+    "MAX_PERIODS",
     "MAX_STATES",
     "MAX_VENUES",
     "MONITORING_BETA",
@@ -377,6 +384,7 @@ __all__ = [
     "forecast_objective",
     "forecast_schedule",
     "forecast_value",
+    "from_bps",
     "frontier",
     "half_life_sensitivity",
     "hedge_direction",
@@ -406,6 +414,7 @@ __all__ = [
     "price_reversion",
     "proportional_allocation",
     "proportional_tilt",
+    "read_rows",
     "residual_impact",
     "response_kernel",
     "reversion_profile",
@@ -433,6 +442,7 @@ __all__ = [
     "static_schedule",
     "synthetic_book",
     "terminal_probability",
+    "to_bps",
     "tracking_frontier",
     "tracking_moments",
     "tracking_schedule",
