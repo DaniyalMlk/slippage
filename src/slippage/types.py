@@ -17,18 +17,40 @@ That single number does two jobs:
 The two uses agreeing is not a coincidence. Impact moves the price against the
 trader, so the direction that makes impact positive is the direction that makes
 cost positive.
+
+Array aliases
+-------------
+
+:data:`FloatArray` and :data:`Floats` live here because they appear in the
+public signatures of five modules, and five identical definitions would mean
+the root could export the name only by choosing which copy it refers to.
+:data:`Floats` is what a function accepts — a plain sequence or any float
+array, so that a caller need not convert first — and :data:`FloatArray` is what
+one returns, always double precision, because a model that silently computed in
+single precision would be a different model.
 """
 
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import Any
+
+import numpy as np
+from numpy.typing import NDArray
 
 from .exceptions import ValidationError
 
-__all__ = ["Bar", "Fill", "Order", "Side"]
+__all__ = ["Bar", "Fill", "FloatArray", "Floats", "Order", "Side"]
+
+#: An array this library returns: always double precision.
+FloatArray = NDArray[np.float64]
+
+#: Anything this library accepts where it wants a run of floats.
+Floats = Sequence[float] | NDArray[np.floating[Any]]
 
 # Quantities are floats because odd lots, currency notionals and fractional
 # shares all occur; comparisons therefore need a tolerance rather than ``==``.
