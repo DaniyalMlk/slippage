@@ -130,6 +130,62 @@ def public_definitions(module: str) -> frozenset[str]:
     return public_names_in(source.read_text(encoding="utf-8"))
 
 
+def owners_of(definitions: dict[str, frozenset[str]]) -> dict[str, list[str]]:
+    """Which modules define each public name, for the names more than one does.
+
+    Takes the map rather than reading it, so that the rule can be exercised
+    against a case the package does not currently contain.
+    """
+    owners: dict[str, list[str]] = {}
+    for module, names in sorted(definitions.items()):
+        for name in sorted(names):
+            owners.setdefault(name, []).append(module)
+    return {name: modules for name, modules in owners.items() if len(modules) > 1}
+
+
+def test_no_public_name_is_defined_by_two_modules() -> None:
+    """The root is one flat namespace, so a name may have one definition.
+
+    ``FloatArray`` had five, identical and in five different modules, and a
+    sixth would have been as easy to add: nothing compared them, and the root
+    could carry only one of them under that name. This is the rule that was
+    missing. It is also what makes every other check here meaningful — a name
+    at the root is unambiguous about which module it came from.
+    """
+    definitions = {module: public_definitions(module) for module in submodules()}
+    assert owners_of(definitions) == {}
+
+
+def test_the_one_definition_rule_sees_a_second_definition() -> None:
+    """The rule above, against the case the package no longer contains."""
+    assert owners_of({"a": frozenset({"Shared"}), "b": frozenset({"Shared"})}) == {
+        "Shared": ["a", "b"]
+    }
+    assert owners_of({"a": frozenset({"One"}), "b": frozenset({"Two"})}) == {}
+    assert owners_of({}) == {}
+
+
+def test_the_pins_are_load_bearing() -> None:
+    """A pin may only excuse a case that exists.
+
+    Both pins are empty, and an empty pin subtracts nothing, so refilling one
+    would excuse a future regression with nothing objecting. An entry has to
+    name a real case: a module that genuinely declares no ``__all__``, or an
+    alias genuinely defined in a module and genuinely absent from the root.
+    """
+    root = frozenset(slippage.__all__)
+    modules = submodules()
+    for module in NO_DUNDER_ALL:
+        assert module in modules, f"{module} is pinned and is not a module"
+        assert getattr(modules[module], "__all__", None) is None, (
+            f"{module} is pinned as declaring nothing and declares an __all__"
+        )
+    defined = frozenset().union(*(public_definitions(m) for m in modules))
+    for alias in LOCAL_ALIASES:
+        assert alias in defined, f"{alias} is pinned and no module defines it"
+        assert alias not in root, f"{alias} is pinned as absent from the root and is at the root"
+
+
 def submodules() -> dict[str, ModuleType]:
     """Every importable submodule of the package, bar the entry points."""
     return {
