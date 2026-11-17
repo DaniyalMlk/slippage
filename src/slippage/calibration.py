@@ -29,6 +29,10 @@ from .series import BarSeries
 from .types import FloatArray, Floats, Order
 
 __all__ = [
+    "MAX_EXPONENT_STD_ERROR",
+    "MIN_OBSERVATIONS",
+    "MIN_RATE_DISPERSION",
+    "MIN_SIZE_RANGE",
     "Estimate",
     "ExecutionSample",
     "LinearTemporaryFit",

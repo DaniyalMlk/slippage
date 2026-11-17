@@ -29,6 +29,9 @@ from .series import BarSeries
 from .types import Bar, Fill, Order, Side
 
 __all__ = [
+    "BAR_COLUMNS",
+    "FILL_COLUMNS",
+    "ORDER_COLUMNS",
     "InputError",
     "load_bars",
     "load_orders",

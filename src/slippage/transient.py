@@ -75,6 +75,7 @@ from .reversion import Decay
 from .types import FloatArray
 
 __all__ = [
+    "DEFINITENESS_TOLERANCE",
     "DecayKernel",
     "ExponentialDecay",
     "PowerLawDecay",

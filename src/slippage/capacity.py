@@ -610,6 +610,8 @@ def cost_elasticity(curve: Sequence[Point], epsilon: float) -> tuple[float, ...]
 __all__ = [
     "BISECTION_STEPS",
     "DEFAULT_CEILING_IN_VOLUME",
+    "INTERVAL_LIMIT",
+    "MAX_INTERVAL_FRACTION",
     "MAX_PERIODS",
     "Capacity",
     "Horizon",
