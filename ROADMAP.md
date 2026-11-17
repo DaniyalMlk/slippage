@@ -1247,3 +1247,32 @@ root can be required to be exactly the union of the modules' declarations.
 - [x] Against the previous source the gate fails five of its twelve checks, and
       it fails again for a constant added undeclared, a second `FloatArray`
       definition, and a declared name dropped from the root
+
+## Phase 29 — What the library does not do
+
+A page that says at length what it checks and nothing about what it omits
+invites a reader to assume the omissions are not there. The list is absences
+rather than refusals: most of what this library declines to do it declines
+deliberately, and a list of those relabelled as shortcomings would read as
+candour and be worth less than no list.
+
+- [x] Seven gaps on the front page, each confirmed by calling the code rather
+      than by reading it
+- [x] One predicate per line, each calling an entry point or asserting the
+      shape of a public type — never searching for a name, which cannot see a
+      feature arriving under a different one
+- [x] A maker rebate can be priced and not recorded: `Placement` carries
+      `maker_rebate` while `Fill(commission=)`,
+      `implementation_shortfall(fees=)` and `build_report(fees_per_share=)`
+      each refuse a negative, so the line fails whichever end of that
+      disagreement is settled
+- [x] The list read between its own heading and the next, so a bullet further
+      down the page cannot satisfy it
+- [x] The boundary asserted to be the heading that actually follows the list.
+      The obvious form of that check — the terminator not appearing in the
+      slice that stops at it — is a tautology, and passed while the boundary
+      was widened by four sections
+- [x] Ten ways of breaking it confirmed to fail: a line deleted, a line
+      reworded, a line added with no predicate, a predicate dropped, one
+      predicate serving two lines, the boundary widened, and each of four gaps
+      closed in the code

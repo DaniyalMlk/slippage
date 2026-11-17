@@ -95,7 +95,7 @@ range and not the other.
 python examples/evidence.py     # all six, non-zero if a figure moves
 ```
 
-Behind them: 1149 tests on Python 3.10 through 3.13, including
+Behind them: 1166 tests on Python 3.10 through 3.13, including
 Hypothesis-generated cap and floor combinations and infeasible ones.
 
 ## Install
