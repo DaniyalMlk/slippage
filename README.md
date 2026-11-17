@@ -1705,6 +1705,41 @@ overstated is the one whose bias is worst, which is the mechanism rather than an
 accident of these parameters, and it matters because the standard error is what
 decides whether a gap between two estimators is real.
 
+## Known gaps
+
+Absences, not refusals. Much of what this library declines to do it declines on
+purpose, and those decisions are documented where they belong — VWAP over an
+interval with no volume raises rather than falling back to TWAP, a drift in the
+final period is accepted and ignored, fewer than three periods gain nothing
+from adapting. The list below is the other thing: what is simply not here.
+
+`tests/test_known_gaps.py` holds one predicate per line, each calling an entry
+point or asserting the shape of a public type. A line that stops being true
+fails, and so does a line that stops being here.
+
+- **A maker rebate cannot be recorded.** `Placement` prices one, and every
+  entry point on the measurement side refuses a negative explicit cost:
+  `Fill(commission=...)`, `implementation_shortfall(fees=...)` and
+  `build_report(fees_per_share=...)` all raise. A rebate can be priced before
+  the trade and not recorded after it.
+- **A bar carries no VWAP.** `Bar` is a timestamp, four prices and a volume, so
+  an interval VWAP is reconstructed from the typical price even where the venue
+  publishes the real figure.
+- **There is no auction price.** `Benchmark.OPEN` and `Benchmark.CLOSE` read a
+  bar's open and close, so a market-on-close order is scored against the
+  continuous close rather than the closing print.
+- **One currency.** Neither `Order` nor `Fill` carries a currency and
+  `build_report` takes no rates, so a book spanning two of them cannot be
+  aggregated.
+- **A fee schedule is one number.** `build_report` takes a single
+  `fees_per_share` for the whole book, although a `Fill` records which venue it
+  happened on, so per-venue and tiered fees cannot be expressed.
+- **No quote or tick data.** All three spread estimators read bars, so a quoted
+  spread cannot be used even where it is available.
+- **Fill probability is a barrier model, not a queue.** `Placement` carries no
+  queue position and no depth, so being third in the queue at a price and being
+  first are the same order to it.
+
 ## Layout
 
 | module | contents |
