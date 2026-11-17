@@ -39,8 +39,6 @@ __all__ = [
     "samples_from_orders",
 ]
 
-"""Anything the fits accept as a column of numbers."""
-
 # Thresholds for the identifiability checks. Each is a judgement about when a
 # fit stops being informative, stated here so it can be argued with.
 MIN_OBSERVATIONS = 10
