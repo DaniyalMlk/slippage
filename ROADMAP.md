@@ -1222,3 +1222,28 @@ conversions to and from them were among the seven.
 - [x] Broken three ways before relying on it — a whole module unwired, a
       phantom root entry, a pinned module gaining a declaration — and failing
       each time
+
+## Phase 28 — Every module declares what it defines
+
+Phase 27 could assert only containment: two modules declared no `__all__`, and
+eight defined public names their own `__all__` left out. With those closed, the
+root can be required to be exactly the union of the modules' declarations.
+
+- [x] `basket` and `reversion` given an `__all__` naming exactly what they
+      define
+- [x] `FloatArray`, assigned separately in five modules, and `Floats`, in two,
+      defined once in `types`, imported by the modules and exported from the
+      root, so a caller can annotate against the type the signatures use
+- [x] Sixteen thresholds and layouts declared where they are defined and
+      re-exported: `calibration`'s four identification thresholds, `capacity`'s
+      interval limits, `io`'s three column layouts, `report`'s components and
+      outlier cut-off, `synthetic`'s session constants and `transient`'s
+      definiteness tolerance — each already documented beside its definition
+- [x] `io`'s top-level type variable made private, the one undeclared name
+      that was not meant to be public
+- [x] The root asserted equal to the union of the declarations plus
+      `__version__`; each module's `__all__` asserted to hold every public name
+      its source defines; no public name allowed in two modules
+- [x] Against the previous source the gate fails five of its twelve checks, and
+      it fails again for a constant added undeclared, a second `FloatArray`
+      definition, and a declared name dropped from the root
