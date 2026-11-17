@@ -1193,3 +1193,32 @@ one value each author picked. Asked mechanically rather than remembered.
       of its result rule asserted: `SquareRootLaw` is both returned and
       constructed, so the gate cannot see a pair of options callers do choose
 - [x] Twelve ways of breaking it confirmed to fail first, the gate among them
+
+## Phase 27 — Public in its module, absent from the package
+
+`slippage.to_bps` raised `AttributeError`. The root's `__init__.py` is a list
+kept by hand, and seven names declared public by their own module were missing
+from it. Every figure the library prints is in basis points, and the
+conversions to and from them were among the seven.
+
+- [x] `to_bps`, `from_bps` and `BPS_PER_UNIT` re-exported from `costs`, which
+      declared them and whose three cost functions were already at the root
+- [x] `MAX_PERIODS`, `DEFAULT_CEILING_IN_VOLUME` and `BISECTION_STEPS`
+      re-exported from `capacity`, whose docstrings refer the reader to
+      `MAX_PERIODS` by name
+- [x] `read_rows` re-exported from `io`, the reader its three loaders share
+- [x] `tests/test_surface.py`: the root surface recomputed from each module's
+      own `__all__` rather than compared with a second list, failing on a
+      declared name the root omits, on a whole module absent from it, on a root
+      entry that is not an attribute, on a root entry no module accounts for,
+      and on a repeated entry
+- [x] The two modules with no `__all__`, `basket` and `reversion`, pinned by
+      name rather than silently exempt, and their source-level definitions
+      required at the root by an AST probe in place of the declaration they lack
+- [x] The probe reads source rather than attributes, because a bare `float`
+      has no `__module__` to sort by and four of the seven were bare numbers;
+      tested against source written to exercise each kind of definition and
+      each thing that is not one
+- [x] Broken three ways before relying on it — a whole module unwired, a
+      phantom root entry, a pinned module gaining a declaration — and failing
+      each time
