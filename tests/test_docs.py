@@ -177,7 +177,15 @@ def test_every_reference_names_an_earlier_phase_that_exists(roadmap: str) -> Non
 
 def test_the_reference_probe_reads_what_is_there(roadmap: str) -> None:
     """Both reference checks pass vacuously if the pattern stops matching."""
-    assert sorted(cross_references(roadmap)) == [(20, 2), (20, 13), (28, 27)]
+    assert sorted(cross_references(roadmap)) == [
+        (20, 2),
+        (20, 13),
+        (28, 27),
+        (30, 8),
+        (30, 8),
+        (30, 17),
+        (30, 17),
+    ]
 
 
 # --- the rules against text built for them -------------------------------- #
