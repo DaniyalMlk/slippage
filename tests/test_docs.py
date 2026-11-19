@@ -47,7 +47,7 @@ RELEASE_ITEM = re.compile(r"^- \[( |x)\] First release on the index", re.MULTILI
 #: What the README said while there was no release. Any of them on the page
 #: is a claim that the package cannot be installed from the index.
 UNRELEASED = re.compile(
-    r"Not on the package index yet|until the first release|is what it will be",
+    r"Not on the package index yet|until the first release|is[\s>]+what it will be",
     re.IGNORECASE,
 )
 
@@ -202,6 +202,12 @@ RELEASED_INSTALL = "# T\n\n## Install\n\n```bash\npip install x\n```\n\n## Next\
 )
 def test_install_says_unreleased_reads_the_section(readme: str, expected: bool) -> None:
     assert install_says_unreleased(readme) is expected
+
+
+def test_the_old_wording_is_seen_across_a_blockquote_line_break() -> None:
+    """The note broke as "line above is" / "> what it will be"."""
+    text = "# T\n\n## Install\n\n> The line above is\n> what it will be.\n\n## Next\n"
+    assert install_says_unreleased(text) is True
 
 
 def test_a_claim_outside_the_install_section_is_not_read() -> None:
