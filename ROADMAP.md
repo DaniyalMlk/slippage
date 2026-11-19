@@ -67,7 +67,8 @@ untestable.
 - [x] `--version` on the command line, agreeing with the packaged metadata
 - [x] Metadata tests: version agreement, typing marker, entry points, licence
 - [x] Tag-driven release with a version guard and no stored credential
-- [ ] First release on the index
+- [x] First release on the index: 0.1.0, wheel and sdist, from the tag-driven
+      workflow
 
 ## Phase 9 — Decomposition without a tape
 
@@ -641,7 +642,6 @@ number an allocation decision turns on.
       optimal schedule has none
 - [x] A capacity curve and the elasticity of cost per share to size
 - [x] A command-line route that tabulates both conventions together
-- [ ] A first release on the package index
 
 ### The two conventions disagree about what limits capacity
 
