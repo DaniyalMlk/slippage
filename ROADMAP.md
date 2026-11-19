@@ -67,7 +67,8 @@ untestable.
 - [x] `--version` on the command line, agreeing with the packaged metadata
 - [x] Metadata tests: version agreement, typing marker, entry points, licence
 - [x] Tag-driven release with a version guard and no stored credential
-- [ ] First release on the index
+- [x] First release on the index: 0.1.0, wheel and sdist, from the tag-driven
+      workflow
 
 ## Phase 9 — Decomposition without a tape
 
@@ -641,7 +642,6 @@ number an allocation decision turns on.
       optimal schedule has none
 - [x] A capacity curve and the elasticity of cost per share to size
 - [x] A command-line route that tabulates both conventions together
-- [ ] A first release on the package index
 
 ### The two conventions disagree about what limits capacity
 
@@ -1276,3 +1276,22 @@ candour and be worth less than no list.
       reworded, a line added with no predicate, a predicate dropped, one
       predicate serving two lines, the boundary widened, and each of four gaps
       closed in the code
+
+## Phase 30 — The front page knew there had been a release
+
+The install section opened with "Not on the package index yet" after 0.1.0 was
+on the index, and the release was an open item twice: under phase 8, and again
+at the end of phase 17, worded differently. The documents were wrong together,
+which is consistent, so comparing them could not have seen it.
+
+- [x] The install section saying the package is on the index, with installing
+      from `main` kept for work merged since the last release
+- [x] Phase 8's release item checked and the copy under phase 17 removed
+- [x] The release pinned as recorded, since a published version is permanent,
+      and the install section held to agreeing with it
+- [x] No open item anywhere allowed to mention a release, however worded,
+      since the second copy did not match the first one's wording
+- [x] The roadmap's numbering held to no duplicate, no gap and no descent, with
+      every cross-reference naming an earlier phase that exists
+- [x] Six ways of breaking it confirmed to fail first, `main`'s own documents
+      before this change among them
