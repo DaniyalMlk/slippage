@@ -1295,3 +1295,22 @@ which is consistent, so comparing them could not have seen it.
       every cross-reference naming an earlier phase that exists
 - [x] Six ways of breaking it confirmed to fail first, `main`'s own documents
       before this change among them
+
+## Phase 31 — What a caller can name
+
+The surface checks ask whether every declared name reaches the root and whether
+any public name is defined twice. Neither can see a type that nothing declares:
+a private class in a public signature, or an alias a field is written in that
+the root does not carry. Both turned up in sibling packages, and nothing here
+has either.
+
+- [x] `tests/test_signatures.py`: every package class and alias a reachable
+      signature or root-class field is written in is bound at the root
+- [x] Classes and aliases compared by identity, aliases read from source since
+      resolving a hint expands them, and each spelled name resolved in the
+      module that wrote it
+- [x] A survey floor, and both aliases shown to be spelled in reachable
+      signatures, so the checks cannot pass by reading nothing
+- [x] Five ways of breaking it confirmed to fail first; a private class in a
+      signature and an equal but distinct `FloatArray` at the root are caught
+      by this check alone
